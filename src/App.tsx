@@ -869,6 +869,705 @@ const Products = () => {
 };
 
 // Continúo implementando el resto de componentes...
+// Componente de Corte de Caja
+const CashSession = () => {
+  const [cashSessions, setCashSessions] = useState<any[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingSession, setEditingSession] = useState<any>(null);
+  const [newSession, setNewSession] = useState({
+    initialAmount: 0, finalAmount: 0, notes: ''
+  });
+
+  useEffect(() => {
+    loadCashSessions();
+  }, []);
+
+  const loadCashSessions = async () => {
+    try {
+      if (window.electronAPI) {
+        const data = await window.electronAPI.getCashSessions();
+        setCashSessions(data);
+      }
+    } catch (error) {
+      console.error('Error loading cash sessions:', error);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (window.electronAPI) {
+        if (editingSession) {
+          await window.electronAPI.updateCashSession(editingSession.id, {
+            ...newSession,
+            endTime: new Date().toISOString(),
+            status: 'Cerrada',
+            expectedAmount: newSession.initialAmount,
+            difference: newSession.finalAmount - newSession.initialAmount
+          });
+        } else {
+          await window.electronAPI.createCashSession({
+            ...newSession,
+            startTime: new Date().toISOString(),
+            status: 'Abierta'
+          });
+        }
+        resetForm();
+        loadCashSessions();
+      }
+    } catch (error) {
+      console.error('Error saving cash session:', error);
+      alert('Error al guardar la sesión de caja');
+    }
+  };
+
+  const handleEdit = (session: any) => {
+    setEditingSession(session);
+    setNewSession({
+      initialAmount: session.initialAmount,
+      finalAmount: session.finalAmount || 0,
+      notes: session.notes || ''
+    });
+    setShowAddForm(true);
+  };
+
+  const resetForm = () => {
+    setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' });
+    setEditingSession(null);
+    setShowAddForm(false);
+  };
+
+  const formatDateTime = (dateString: string) => {
+    return new Date(dateString).toLocaleString('es-MX');
+  };
+
+  const getStatusColor = (status: string) => {
+    return status === 'Abierta' ? '#4caf50' : '#2196f3';
+  };
+
+  return (
+    <div style={{ padding: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h1>💰 Corte de Caja</h1>
+        <button 
+          onClick={() => setShowAddForm(true)}
+          style={{ 
+            background: '#4caf50', 
+            color: 'white', 
+            padding: '12px 24px', 
+            border: 'none', 
+            borderRadius: '4px', 
+            cursor: 'pointer',
+            fontSize: '16px'
+          }}
+        >
+          + Nueva Sesión
+        </button>
+      </div>
+
+      {/* Formulario */}
+      {showAddForm && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', minWidth: '400px' }}>
+            <h2>{editingSession ? 'Cerrar Sesión' : 'Nueva Sesión de Caja'}</h2>
+            <form onSubmit={handleSubmit}>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>
+                  {editingSession ? 'Monto Inicial:' : 'Monto Inicial *:'}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newSession.initialAmount}
+                  onChange={(e) => setNewSession({...newSession, initialAmount: parseFloat(e.target.value) || 0})}
+                  required
+                  disabled={editingSession}
+                  style={{ 
+                    width: '100%', 
+                    padding: '8px', 
+                    border: '1px solid #ddd', 
+                    borderRadius: '4px',
+                    background: editingSession ? '#f5f5f5' : 'white'
+                  }}
+                />
+              </div>
+              {editingSession && (
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px' }}>Monto Final *:</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newSession.finalAmount}
+                    onChange={(e) => setNewSession({...newSession, finalAmount: parseFloat(e.target.value) || 0})}
+                    required
+                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  />
+                </div>
+              )}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Notas:</label>
+                <textarea
+                  value={newSession.notes}
+                  onChange={(e) => setNewSession({...newSession, notes: e.target.value})}
+                  rows={3}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', resize: 'vertical' }}
+                />
+              </div>
+              {editingSession && (
+                <div style={{ 
+                  marginBottom: '20px', 
+                  padding: '10px', 
+                  background: '#e3f2fd', 
+                  borderRadius: '4px',
+                  border: '1px solid #2196f3'
+                }}>
+                  <div>Diferencia: ${(newSession.finalAmount - newSession.initialAmount).toFixed(2)}</div>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button 
+                  type="button" 
+                  onClick={resetForm}
+                  style={{ padding: '8px 16px', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  style={{ 
+                    background: editingSession ? '#d32f2f' : '#4caf50', 
+                    color: 'white', 
+                    padding: '8px 16px', 
+                    border: 'none', 
+                    borderRadius: '4px', 
+                    cursor: 'pointer' 
+                  }}
+                >
+                  {editingSession ? 'Cerrar Sesión' : 'Abrir Sesión'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Tabla de sesiones */}
+      <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead style={{ background: '#f5f5f5' }}>
+            <tr>
+              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Fecha Inicio</th>
+              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Fecha Fin</th>
+              <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Inicial</th>
+              <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Final</th>
+              <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Diferencia</th>
+              <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Estado</th>
+              <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cashSessions.map((session) => (
+              <tr key={session.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                <td style={{ padding: '12px' }}>{formatDateTime(session.startTime)}</td>
+                <td style={{ padding: '12px' }}>
+                  {session.endTime ? formatDateTime(session.endTime) : '-'}
+                </td>
+                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>
+                  ${session.initialAmount?.toFixed(2) || '0.00'}
+                </td>
+                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>
+                  ${session.finalAmount?.toFixed(2) || '-'}
+                </td>
+                <td style={{ 
+                  padding: '12px', 
+                  textAlign: 'right', 
+                  fontWeight: 'bold',
+                  color: session.difference > 0 ? '#4caf50' : session.difference < 0 ? '#d32f2f' : '#666'
+                }}>
+                  {session.difference !== undefined ? `$${session.difference.toFixed(2)}` : '-'}
+                </td>
+                <td style={{ padding: '12px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    color: 'white',
+                    background: getStatusColor(session.status)
+                  }}>
+                    {session.status}
+                  </span>
+                </td>
+                <td style={{ padding: '12px', textAlign: 'center' }}>
+                  {session.status === 'Abierta' && (
+                    <button 
+                      onClick={() => handleEdit(session)}
+                      style={{ 
+                        padding: '4px 8px', 
+                        border: '1px solid #d32f2f', 
+                        background: 'white', 
+                        color: '#d32f2f', 
+                        borderRadius: '4px', 
+                        cursor: 'pointer' 
+                      }}
+                    >
+                      Cerrar
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+// Componente de Reportes
+const Reports = () => {
+  const [sales, setSales] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [dateRange, setDateRange] = useState({
+    startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0]
+  });
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      if (window.electronAPI) {
+        const [salesData, productsData, customersData] = await Promise.all([
+          window.electronAPI.getSales(),
+          window.electronAPI.getProducts(),
+          window.electronAPI.getCustomers()
+        ]);
+        setSales(salesData);
+        setProducts(productsData);
+        setCustomers(customersData);
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+  };
+
+  const filteredSales = sales.filter(sale => {
+    const saleDate = new Date(sale.createdAt).toISOString().split('T')[0];
+    return saleDate >= dateRange.startDate && saleDate <= dateRange.endDate;
+  });
+
+  const calculateStats = () => {
+    const totalSales = filteredSales.reduce((sum, sale) => sum + sale.total, 0);
+    const totalDiscount = filteredSales.reduce((sum, sale) => sum + sale.discount, 0);
+    const totalTax = filteredSales.reduce((sum, sale) => sum + sale.tax, 0);
+    const avgSale = filteredSales.length > 0 ? totalSales / filteredSales.length : 0;
+    
+    return { totalSales, totalDiscount, totalTax, avgSale, totalTransactions: filteredSales.length };
+  };
+
+  const getProductSales = () => {
+    const productSales: { [key: number]: { name: string, quantity: number, revenue: number } } = {};
+    
+    filteredSales.forEach(sale => {
+      sale.items.forEach((item: any) => {
+        const product = products.find(p => p.id === item.productId);
+        if (product) {
+          if (!productSales[item.productId]) {
+            productSales[item.productId] = { name: product.name, quantity: 0, revenue: 0 };
+          }
+          productSales[item.productId].quantity += item.quantity;
+          productSales[item.productId].revenue += item.subtotal;
+        }
+      });
+    });
+
+    return Object.values(productSales).sort((a, b) => b.revenue - a.revenue);
+  };
+
+  const getCustomerStats = () => {
+    const customerStats: { [key: number]: { name: string, purchases: number, total: number } } = {};
+    
+    filteredSales.forEach(sale => {
+      if (sale.customerId) {
+        const customer = customers.find(c => c.id === sale.customerId);
+        if (customer) {
+          if (!customerStats[sale.customerId]) {
+            customerStats[sale.customerId] = { name: customer.name, purchases: 0, total: 0 };
+          }
+          customerStats[sale.customerId].purchases++;
+          customerStats[sale.customerId].total += sale.total;
+        }
+      }
+    });
+
+    return Object.values(customerStats).sort((a, b) => b.total - a.total);
+  };
+
+  const stats = calculateStats();
+  const productSales = getProductSales();
+  const customerStats = getCustomerStats();
+
+  return (
+    <div style={{ padding: '20px' }}>
+      <h1>📊 Reportes y Análisis</h1>
+      
+      {/* Filtros de fecha */}
+      <div style={{ 
+        display: 'flex', 
+        gap: '15px', 
+        alignItems: 'center', 
+        marginBottom: '25px', 
+        padding: '20px', 
+        background: 'white', 
+        borderRadius: '8px',
+        border: '1px solid #e0e0e0'
+      }}>
+        <label>Desde:</label>
+        <input
+          type="date"
+          value={dateRange.startDate}
+          onChange={(e) => setDateRange({...dateRange, startDate: e.target.value})}
+          style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+        />
+        <label>Hasta:</label>
+        <input
+          type="date"
+          value={dateRange.endDate}
+          onChange={(e) => setDateRange({...dateRange, endDate: e.target.value})}
+          style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+        />
+      </div>
+
+      {/* Resumen general */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+        <div style={{ background: 'linear-gradient(135deg, #4caf50, #45a049)', color: 'white', padding: '20px', borderRadius: '8px', textAlign: 'center' }}>
+          <h3>Total Ventas</h3>
+          <p style={{ fontSize: '24px', margin: '10px 0' }}>${stats.totalSales.toFixed(2)}</p>
+        </div>
+        <div style={{ background: 'linear-gradient(135deg, #2196f3, #1976d2)', color: 'white', padding: '20px', borderRadius: '8px', textAlign: 'center' }}>
+          <h3>Transacciones</h3>
+          <p style={{ fontSize: '24px', margin: '10px 0' }}>{stats.totalTransactions}</p>
+        </div>
+        <div style={{ background: 'linear-gradient(135deg, #ff9800, #f57c00)', color: 'white', padding: '20px', borderRadius: '8px', textAlign: 'center' }}>
+          <h3>Venta Promedio</h3>
+          <p style={{ fontSize: '24px', margin: '10px 0' }}>${stats.avgSale.toFixed(2)}</p>
+        </div>
+        <div style={{ background: 'linear-gradient(135deg, #9c27b0, #7b1fa2)', color: 'white', padding: '20px', borderRadius: '8px', textAlign: 'center' }}>
+          <h3>Total Descuentos</h3>
+          <p style={{ fontSize: '24px', margin: '10px 0' }}>${stats.totalDiscount.toFixed(2)}</p>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+        {/* Top productos */}
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <h3>🏆 Productos Más Vendidos</h3>
+          <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+            {productSales.slice(0, 10).map((product, index) => (
+              <div key={index} style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                padding: '10px 0', 
+                borderBottom: '1px solid #f0f0f0'
+              }}>
+                <div>
+                  <div style={{ fontWeight: 'bold' }}>{product.name}</div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>Vendidos: {product.quantity}</div>
+                </div>
+                <div style={{ fontWeight: 'bold', color: '#4caf50' }}>
+                  ${product.revenue.toFixed(2)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top clientes */}
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <h3>👑 Mejores Clientes</h3>
+          <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+            {customerStats.slice(0, 10).map((customer, index) => (
+              <div key={index} style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                padding: '10px 0', 
+                borderBottom: '1px solid #f0f0f0'
+              }}>
+                <div>
+                  <div style={{ fontWeight: 'bold' }}>{customer.name}</div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>Compras: {customer.purchases}</div>
+                </div>
+                <div style={{ fontWeight: 'bold', color: '#2196f3' }}>
+                  ${customer.total.toFixed(2)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Componente de Configuración
+const Settings = () => {
+  const [settings, setSettings] = useState<any[]>([]);
+  const [editingSetting, setEditingSetting] = useState<any>(null);
+  const [newValue, setNewValue] = useState('');
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      if (window.electronAPI) {
+        const data = await window.electronAPI.getSettings();
+        setSettings(data);
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    }
+  };
+
+  const handleEdit = (setting: any) => {
+    setEditingSetting(setting);
+    setNewValue(setting.value);
+  };
+
+  const handleSave = async () => {
+    try {
+      if (window.electronAPI && editingSetting) {
+        await window.electronAPI.updateSetting(editingSetting.key, newValue);
+        setEditingSetting(null);
+        setNewValue('');
+        loadSettings();
+      }
+    } catch (error) {
+      console.error('Error updating setting:', error);
+      alert('Error al actualizar la configuración');
+    }
+  };
+
+  const getInputType = (key: string) => {
+    if (key.includes('rate') || key.includes('tax')) return 'number';
+    if (key.includes('email')) return 'email';
+    if (key.includes('phone')) return 'tel';
+    return 'text';
+  };
+
+  const getInputStep = (key: string) => {
+    if (key.includes('rate') || key.includes('tax')) return '0.01';
+    return undefined;
+  };
+
+  return (
+    <div style={{ padding: '20px' }}>
+      <h1>⚙️ Configuración del Sistema</h1>
+      
+      <div style={{ display: 'grid', gap: '20px', maxWidth: '800px' }}>
+        {/* Configuración de negocio */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <h3 style={{ marginTop: 0, color: '#1976d2', borderBottom: '2px solid #e3f2fd', paddingBottom: '10px' }}>
+            🏪 Información del Negocio
+          </h3>
+          {settings.map((setting) => (
+            <div key={setting.id} style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              padding: '15px 0', 
+              borderBottom: '1px solid #f0f0f0'
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
+                  {setting.description || setting.key}
+                </div>
+                <div style={{ fontSize: '12px', color: '#666', fontFamily: 'monospace' }}>
+                  {setting.key}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: '300px' }}>
+                {editingSetting?.id === setting.id ? (
+                  <>
+                    <input
+                      type={getInputType(setting.key)}
+                      step={getInputStep(setting.key)}
+                      value={newValue}
+                      onChange={(e) => setNewValue(e.target.value)}
+                      style={{ 
+                        flex: 1, 
+                        padding: '8px', 
+                        border: '2px solid #2196f3', 
+                        borderRadius: '4px',
+                        fontSize: '14px'
+                      }}
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleSave}
+                      style={{ 
+                        background: '#4caf50', 
+                        color: 'white', 
+                        border: 'none', 
+                        padding: '8px 12px', 
+                        borderRadius: '4px', 
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      ✓
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingSetting(null);
+                        setNewValue('');
+                      }}
+                      style={{ 
+                        background: '#d32f2f', 
+                        color: 'white', 
+                        border: 'none', 
+                        padding: '8px 12px', 
+                        borderRadius: '4px', 
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ 
+                      flex: 1, 
+                      padding: '8px 12px', 
+                      background: '#f5f5f5', 
+                      borderRadius: '4px',
+                      fontFamily: setting.key.includes('rate') || setting.key.includes('tax') ? 'monospace' : 'inherit',
+                      fontSize: '14px'
+                    }}>
+                      {setting.key.includes('rate') || setting.key.includes('tax') 
+                        ? `${(parseFloat(setting.value) * 100).toFixed(1)}%` 
+                        : setting.value}
+                    </span>
+                    <button
+                      onClick={() => handleEdit(setting)}
+                      style={{ 
+                        background: '#2196f3', 
+                        color: 'white', 
+                        border: 'none', 
+                        padding: '8px 12px', 
+                        borderRadius: '4px', 
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      Editar
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Información del sistema */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <h3 style={{ marginTop: 0, color: '#4caf50', borderBottom: '2px solid #e8f5e8', paddingBottom: '10px' }}>
+            📱 Información del Sistema
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+            <div>
+              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Versión</div>
+              <div style={{ color: '#666' }}>1.0.0</div>
+            </div>
+            <div>
+              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Plataforma</div>
+              <div style={{ color: '#666' }}>Electron + React</div>
+            </div>
+            <div>
+              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Base de Datos</div>
+              <div style={{ color: '#666' }}>Mock Database</div>
+            </div>
+            <div>
+              <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Estado</div>
+              <div style={{ color: '#4caf50', fontWeight: 'bold' }}>✓ Operativo</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Acciones del sistema */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <h3 style={{ marginTop: 0, color: '#ff9800', borderBottom: '2px solid #fff3e0', paddingBottom: '10px' }}>
+            🔧 Acciones del Sistema
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
+            <button
+              onClick={() => {
+                if (confirm('¿Estás seguro de que quieres recargar la aplicación?')) {
+                  window.location.reload();
+                }
+              }}
+              style={{ 
+                background: '#2196f3', 
+                color: 'white', 
+                border: 'none', 
+                padding: '12px 20px', 
+                borderRadius: '4px', 
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              🔄 Recargar Aplicación
+            </button>
+            <button
+              onClick={() => {
+                alert('Funcionalidad de respaldo no implementada en la versión demo');
+              }}
+              style={{ 
+                background: '#4caf50', 
+                color: 'white', 
+                border: 'none', 
+                padding: '12px 20px', 
+                borderRadius: '4px', 
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              💾 Crear Respaldo
+            </button>
+            <button
+              onClick={() => {
+                alert('Funcionalidad de exportación no implementada en la versión demo');
+              }}
+              style={{ 
+                background: '#ff9800', 
+                color: 'white', 
+                border: 'none', 
+                padding: '12px 20px', 
+                borderRadius: '4px', 
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              📊 Exportar Datos
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Componente de Clientes
 const Customers = () => {
   const [customers, setCustomers] = useState<any[]>([]);
@@ -1147,13 +1846,6 @@ const Customers = () => {
   );
 };
 
-const SimpleComponent = ({ title, icon }: { title: string; icon: string }) => (
-  <div style={{ padding: '20px' }}>
-    <h1>{icon} {title}</h1>
-    <p>Esta funcionalidad está completamente implementada en el sistema.</p>
-  </div>
-);
-
 function App() {
   const [currentView, setCurrentView] = useState<CurrentView>('dashboard');
 
@@ -1170,11 +1862,11 @@ function App() {
       case 'customers':
         return <Customers />;
       case 'cash-session':
-        return <SimpleComponent title="Corte de Caja" icon="💰" />;
+        return <CashSession />;
       case 'reports':
-        return <SimpleComponent title="Reportes" icon="📊" />;
+        return <Reports />;
       case 'settings':
-        return <SimpleComponent title="Configuración" icon="⚙️" />;
+        return <Settings />;
       default:
         return <Dashboard />;
     }

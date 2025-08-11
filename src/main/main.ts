@@ -65,7 +65,9 @@ class JoyeriaApp {
       icon: process.platform === 'win32' ? 
         path.join(__dirname, '../../assets/icon.ico') : 
         path.join(__dirname, '../../assets/icon.png'),
-      show: false
+      show: true,  // Mostrar inmediatamente
+      alwaysOnTop: false,
+      skipTaskbar: false
     });
 
     // Configurar menu
@@ -74,13 +76,12 @@ class JoyeriaApp {
     // Cargar la aplicación
     await this.loadRenderer();
 
-    // Mostrar ventana cuando esté lista
-    this.mainWindow.once('ready-to-show', () => {
-      this.mainWindow?.show();
-      if (this.isDevelopment) {
-        this.mainWindow?.webContents.openDevTools();
-      }
-    });
+    // La ventana ya está visible (show: true), pero asegurarse de que tenga foco
+    this.mainWindow.focus();
+    
+    if (this.isDevelopment) {
+      this.mainWindow.webContents.openDevTools();
+    }
 
     // Logging para debugging
     this.mainWindow.webContents.on('did-finish-load', () => {
@@ -330,15 +331,16 @@ new JoyeriaApp();
 
 // Manejar eventos de cierre
 process.on('before-exit', async () => {
-  await databaseService.close();
+  // El MockDatabaseService no necesita cierre explícito
+  log.info('🔐 Application closing...');
 });
 
 process.on('SIGINT', async () => {
-  await databaseService.close();
+  log.info('🔐 Application interrupted...');
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  await databaseService.close();
+  log.info('🔐 Application terminated...');
   process.exit(0);
 });
