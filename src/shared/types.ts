@@ -17,8 +17,30 @@ export interface Customer {
   name: string;
   email?: string;
   phone?: string;
+  alternatePhone?: string;
   address?: string;
   discountLevel: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+  
+  // Información demográfica
+  birthDate?: string;
+  gender?: string;
+  occupation?: string;
+  
+  // Información comercial
+  customerType?: 'Particular' | 'Empresa' | 'Mayorista';
+  referredBy?: string;
+  preferredContact?: 'Email' | 'Teléfono' | 'SMS' | 'WhatsApp';
+  
+  // Preferencias de compra
+  preferredCategories?: string[];
+  budgetRange?: string;
+  specialOccasions?: string[];
+  
+  // Información adicional
+  notes?: string;
+  tags?: string[];
+  isActive?: boolean;
+  
   createdAt: string;
   updatedAt: string;
 }
