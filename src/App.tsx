@@ -1403,22 +1403,26 @@ const Reports = () => {
   const renderGeneralTab = () => (
     <div>
       {/* Resumen general */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '30px' }}>
-        <div style={{ background: 'linear-gradient(135deg, #4caf50, #45a049)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Ventas Totales</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>${stats.totalSales.toLocaleString()}</p>
+      <div className="lux-grid" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(240px, 1fr))', marginBottom:'30px' }}>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ventas Totales</h3>
+          <div className="stat-value">${stats.totalSales.toLocaleString()}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Periodo seleccionado</small>
         </div>
-        <div style={{ background: 'linear-gradient(135deg, #2196f3, #1976d2)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Transacciones</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>{stats.totalTransactions}</p>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Transacciones</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{stats.totalTransactions}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Comprobantes</small>
         </div>
-        <div style={{ background: 'linear-gradient(135deg, #ff9800, #f57c00)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Venta Promedio</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>${stats.avgSale.toLocaleString()}</p>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Venta Promedio</h3>
+          <div className="stat-value">${stats.avgSale.toLocaleString()}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Ticket medio</small>
         </div>
-        <div style={{ background: 'linear-gradient(135deg, #9c27b0, #7b1fa2)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Descuentos</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>${stats.totalDiscount.toLocaleString()}</p>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Descuentos</h3>
+          <div className="stat-value">${stats.totalDiscount.toLocaleString()}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Aplicados</small>
         </div>
       </div>
 
@@ -1442,11 +1446,12 @@ const Reports = () => {
                   <td style={{ padding: '12px 15px' }}>
                     <span style={{
                       padding: '4px 8px',
-                      background: '#e3f2fd',
-                      color: '#1976d2',
+                      background: '#f5f7fb',
+                      color: '#46505a',
+                      border: '1px solid #e5e9f0',
                       borderRadius: '12px',
                       fontSize: '12px',
-                      fontWeight: 'bold'
+                      fontWeight: 600
                     }}>
                       {product.category}
                     </span>
@@ -1499,9 +1504,10 @@ const Reports = () => {
                         padding: '3px 8px',
                         borderRadius: '12px',
                         fontSize: '11px',
-                        fontWeight: 'bold',
-                        color: 'white',
-                        background: stat.customer.customerType === 'Empresa' ? '#4caf50' : stat.customer.customerType === 'Mayorista' ? '#ff9800' : '#2196f3',
+                        fontWeight: 600,
+                        color: '#46505a',
+                        background: '#f5f7fb',
+                        border: '1px solid #e5e9f0',
                         marginRight: '5px'
                       }}>
                         {stat.customer.customerType || 'Particular'}
@@ -1510,11 +1516,10 @@ const Reports = () => {
                         padding: '3px 8px',
                         borderRadius: '12px',
                         fontSize: '11px',
-                        fontWeight: 'bold',
-                        color: 'white',
-                        background: stat.customer.discountLevel === 'Platinum' ? '#e5e4e2' : 
-                                   stat.customer.discountLevel === 'Gold' ? '#ffd700' :
-                                   stat.customer.discountLevel === 'Silver' ? '#c0c0c0' : '#cd7f32'
+                        fontWeight: 600,
+                        color: '#46505a',
+                        background: '#f5f7fb',
+                        border: '1px solid #e5e9f0'
                       }}>
                         {stat.customer.discountLevel}
                       </span>
@@ -1553,12 +1558,13 @@ const Reports = () => {
             <div key={gender} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontWeight: 'bold' }}>{gender}</span>
               <span style={{ 
-                background: '#e91e63', 
-                color: 'white', 
+                background: '#f5f7fb', 
+                color: '#46505a', 
                 padding: '4px 12px', 
                 borderRadius: '15px', 
+                border: '1px solid #e5e9f0',
                 fontSize: '12px',
-                fontWeight: 'bold'
+                fontWeight: 600
               }}>
                 {count} ({((count / customers.length) * 100).toFixed(1)}%)
               </span>
@@ -1573,12 +1579,13 @@ const Reports = () => {
             <div key={ageRange} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontWeight: 'bold' }}>{ageRange}</span>
               <span style={{ 
-                background: '#ff5722', 
-                color: 'white', 
+                background: '#f5f7fb', 
+                color: '#46505a', 
                 padding: '4px 12px', 
                 borderRadius: '15px', 
+                border: '1px solid #e5e9f0',
                 fontSize: '12px',
-                fontWeight: 'bold'
+                fontWeight: 600
               }}>
                 {count} ({((count / customers.length) * 100).toFixed(1)}%)
               </span>
@@ -1593,12 +1600,13 @@ const Reports = () => {
             <div key={type} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontWeight: 'bold' }}>{type}</span>
               <span style={{ 
-                background: '#4caf50', 
-                color: 'white', 
+                background: '#f5f7fb', 
+                color: '#46505a', 
                 padding: '4px 12px', 
                 borderRadius: '15px', 
+                border: '1px solid #e5e9f0',
                 fontSize: '12px',
-                fontWeight: 'bold'
+                fontWeight: 600
               }}>
                 {count} ({((count / customers.length) * 100).toFixed(1)}%)
               </span>
@@ -1613,12 +1621,13 @@ const Reports = () => {
             <div key={city} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontWeight: 'bold' }}>{city}</span>
               <span style={{ 
-                background: '#2196f3', 
-                color: 'white', 
+                background: '#f5f7fb', 
+                color: '#46505a', 
                 padding: '4px 12px', 
                 borderRadius: '15px', 
+                border: '1px solid #e5e9f0',
                 fontSize: '12px',
-                fontWeight: 'bold'
+                fontWeight: 600
               }}>
                 {count} ({((count / customers.length) * 100).toFixed(1)}%)
               </span>
@@ -1633,12 +1642,13 @@ const Reports = () => {
             <div key={budget} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontWeight: 'bold' }}>{budget}</span>
               <span style={{ 
-                background: '#ff9800', 
-                color: 'white', 
+                background: '#f5f7fb', 
+                color: '#46505a', 
                 padding: '4px 12px', 
                 borderRadius: '15px', 
+                border: '1px solid #e5e9f0',
                 fontSize: '12px',
-                fontWeight: 'bold'
+                fontWeight: 600
               }}>
                 {count} ({((count / customers.length) * 100).toFixed(1)}%)
               </span>
@@ -1653,12 +1663,13 @@ const Reports = () => {
             <div key={occupation} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontWeight: 'bold' }}>{occupation}</span>
               <span style={{ 
-                background: '#795548', 
-                color: 'white', 
+                background: '#f5f7fb', 
+                color: '#46505a', 
                 padding: '4px 12px', 
                 borderRadius: '15px', 
+                border: '1px solid #e5e9f0',
                 fontSize: '12px',
-                fontWeight: 'bold'
+                fontWeight: 600
               }}>
                 {count} ({((count / customers.length) * 100).toFixed(1)}%)
               </span>
@@ -1704,12 +1715,12 @@ const Reports = () => {
 
   return (
     <div style={{ padding: '20px' }}>
-      <h1 style={{ background: 'linear-gradient(135deg, #2196f3, #1976d2)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '20px' }}>
+      <h1 className="gradient-title" style={{ marginBottom: '20px' }}>
         📊 Reportes y Análisis Avanzados
       </h1>
       
       {/* Filtros de fecha */}
-      <div style={{ 
+  <div style={{ 
         display: 'flex', 
         gap: '15px', 
         alignItems: 'center', 
@@ -3002,34 +3013,29 @@ const Customers = () => {
       </div>
 
       {/* Estadísticas rápidas */}
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-        gap: '15px', 
-        marginBottom: '25px' 
-      }}>
-        <div style={{ background: 'linear-gradient(135deg, #2196f3, #1976d2)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Total Clientes</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>{customers.length}</p>
+      <div className="lux-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginBottom: '25px' }}>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 10px', fontSize:'14px', textTransform:'uppercase', letterSpacing:'1px', color:'#9aa4b1'}}>Total Clientes</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{customers.length}</div>
+          <small style={{ fontSize:'12px', color:'#9aa4b1' }}>Registrados</small>
         </div>
-        <div style={{ background: 'linear-gradient(135deg, #4caf50, #388e3c)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Activos</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>{customers.filter(c => c.isActive !== false).length}</p>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 10px', fontSize:'14px', textTransform:'uppercase', letterSpacing:'1px', color:'#9aa4b1'}}>Activos</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{customers.filter(c => c.isActive !== false).length}</div>
+          <small style={{ fontSize:'12px', color:'#9aa4b1' }}>Con estado activo</small>
         </div>
-        <div style={{ background: 'linear-gradient(135deg, #ff9800, #f57c00)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>VIP/Gold+</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>
-            {customers.filter(c => ['Gold', 'Platinum'].includes(c.discountLevel)).length}
-          </p>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 10px', fontSize:'14px', textTransform:'uppercase', letterSpacing:'1px', color:'#9aa4b1'}}>VIP / Gold+</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{customers.filter(c => ['Gold', 'Platinum'].includes(c.discountLevel)).length}</div>
+          <small style={{ fontSize:'12px', color:'#9aa4b1' }}>Clientes preferentes</small>
         </div>
-        <div style={{ background: 'linear-gradient(135deg, #9c27b0, #7b1fa2)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Empresas</h4>
-          <p style={{ fontSize: '24px', margin: 0, fontWeight: 'bold' }}>
-            {customers.filter(c => c.customerType === 'Empresa').length}
-          </p>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 10px', fontSize:'14px', textTransform:'uppercase', letterSpacing:'1px', color:'#9aa4b1'}}>Empresas</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{customers.filter(c => c.customerType === 'Empresa').length}</div>
+          <small style={{ fontSize:'12px', color:'#9aa4b1' }}>Clientes tipo empresa</small>
         </div>
-        <div style={{ background: 'linear-gradient(135deg, #673ab7, #512da8)', color: 'white', padding: '20px', borderRadius: '12px', textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Herramientas</h4>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 10px', fontSize:'14px', textTransform:'uppercase', letterSpacing:'1px', color:'#9aa4b1'}}>Herramientas</h3>
           <button
             onClick={async () => {
               if (confirm('¿Actualizar automáticamente los niveles de TODOS los clientes basado en las configuraciones actuales?')) {
@@ -3037,16 +3043,16 @@ const Customers = () => {
               }
             }}
             style={{
-              background: 'rgba(255,255,255,0.2)',
-              color: 'white',
-              border: '1px solid rgba(255,255,255,0.3)',
-              padding: '8px 12px',
-              borderRadius: '6px',
+              background: '#ffffff',
+              color: '#232323',
+              border: '1px solid #e5e5ea',
+              padding: '10px 12px',
+              borderRadius: '10px',
               cursor: 'pointer',
               fontSize: '12px',
-              fontWeight: 'bold',
+              fontWeight: 600,
               width: '100%',
-              marginTop: '5px'
+              marginTop: '6px'
             }}
             title="Recalcular niveles para todos los clientes"
           >

@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 * {
   box-sizing: border-box;
@@ -34,8 +33,8 @@ body {
   --radius-m: 12px;
   --radius-s: 7px;
   --transition: 0.32s cubic-bezier(.4,.0,.2,1);
-  --font-display: 'Playfair Display', serif;
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: ui-serif, Georgia, 'Times New Roman', Times, serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 
@@ -206,9 +205,8 @@ h1, h2, h3, h4, h5, h6 {
 h1 {
   font-size: 2rem;
   color: #1a202c;
-  border-bottom: 3px solid #4299e1;
-  padding-bottom: 0.5rem;
-  margin-bottom: 1.5rem;
+  padding-bottom: 0.25rem;
+  margin-bottom: 1.25rem;
 }
 
 h2 {
