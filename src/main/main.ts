@@ -267,7 +267,7 @@ class JoyeriaApp {
     // Handlers para Sesiones de Caja
     ipcMain.handle(IPC_CHANNELS.GET_CASH_SESSIONS, async () => {
       try {
-        return await databaseService.getAllCashSessions();
+        return await databaseService.getCashSessions();
       } catch (error) {
         log.error('Error getting cash sessions:', error);
         throw error;
@@ -295,7 +295,7 @@ class JoyeriaApp {
     // Handlers para Configuración
     ipcMain.handle(IPC_CHANNELS.GET_SETTINGS, async () => {
       try {
-        return await databaseService.getAllSettings();
+        return await databaseService.getSettings();
       } catch (error) {
         log.error('Error getting settings:', error);
         throw error;

@@ -869,6 +869,284 @@ const Products = () => {
 };
 
 // Continúo implementando el resto de componentes...
+// Componente de Clientes
+const Customers = () => {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<any>(null);
+  const [newCustomer, setNewCustomer] = useState({
+    name: '', email: '', phone: '', address: '', discountLevel: 'Bronze'
+  });
+
+  useEffect(() => {
+    loadCustomers();
+  }, []);
+
+  const loadCustomers = async () => {
+    try {
+      if (window.electronAPI) {
+        const data = await window.electronAPI.getCustomers();
+        setCustomers(data);
+      }
+    } catch (error) {
+      console.error('Error loading customers:', error);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (window.electronAPI) {
+        if (editingCustomer) {
+          await window.electronAPI.updateCustomer(editingCustomer.id, newCustomer);
+        } else {
+          await window.electronAPI.createCustomer(newCustomer);
+        }
+        resetForm();
+        loadCustomers();
+      }
+    } catch (error) {
+      console.error('Error saving customer:', error);
+      alert('Error al guardar el cliente');
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (confirm('¿Estás seguro de que quieres eliminar este cliente?')) {
+      try {
+        if (window.electronAPI) {
+          await window.electronAPI.deleteCustomer(id);
+          loadCustomers();
+        }
+      } catch (error) {
+        console.error('Error deleting customer:', error);
+        alert('Error al eliminar el cliente');
+      }
+    }
+  };
+
+  const handleEdit = (customer: any) => {
+    setEditingCustomer(customer);
+    setNewCustomer({
+      name: customer.name,
+      email: customer.email || '',
+      phone: customer.phone || '',
+      address: customer.address || '',
+      discountLevel: customer.discountLevel
+    });
+    setShowAddForm(true);
+  };
+
+  const resetForm = () => {
+    setNewCustomer({ name: '', email: '', phone: '', address: '', discountLevel: 'Bronze' });
+    setEditingCustomer(null);
+    setShowAddForm(false);
+  };
+
+  const filteredCustomers = customers.filter(customer =>
+    customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    customer.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    customer.phone?.includes(searchTerm)
+  );
+
+  const getDiscountColor = (level: string) => {
+    switch(level) {
+      case 'Bronze': return '#cd7f32';
+      case 'Silver': return '#c0c0c0';
+      case 'Gold': return '#ffd700';
+      case 'Platinum': return '#e5e4e2';
+      default: return '#666';
+    }
+  };
+
+  return (
+    <div style={{ padding: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h1>👥 Gestión de Clientes</h1>
+        <button 
+          onClick={() => setShowAddForm(true)}
+          style={{ 
+            background: '#2196f3', 
+            color: 'white', 
+            padding: '12px 24px', 
+            border: 'none', 
+            borderRadius: '4px', 
+            cursor: 'pointer',
+            fontSize: '16px'
+          }}
+        >
+          + Nuevo Cliente
+        </button>
+      </div>
+
+      {/* Búsqueda */}
+      <div style={{ marginBottom: '20px' }}>
+        <input
+          type="text"
+          placeholder="Buscar por nombre, email o teléfono..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{ 
+            width: '100%', 
+            maxWidth: '400px',
+            padding: '12px', 
+            border: '1px solid #ddd', 
+            borderRadius: '4px', 
+            fontSize: '16px' 
+          }}
+        />
+      </div>
+
+      {/* Formulario */}
+      {showAddForm && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', minWidth: '500px', maxHeight: '80vh', overflowY: 'auto' }}>
+            <h2>{editingCustomer ? 'Editar Cliente' : 'Nuevo Cliente'}</h2>
+            <form onSubmit={handleSubmit}>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Nombre *:</label>
+                <input
+                  type="text"
+                  value={newCustomer.name}
+                  onChange={(e) => setNewCustomer({...newCustomer, name: e.target.value})}
+                  required
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Email:</label>
+                <input
+                  type="email"
+                  value={newCustomer.email}
+                  onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Teléfono:</label>
+                <input
+                  type="tel"
+                  value={newCustomer.phone}
+                  onChange={(e) => setNewCustomer({...newCustomer, phone: e.target.value})}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Dirección:</label>
+                <textarea
+                  value={newCustomer.address}
+                  onChange={(e) => setNewCustomer({...newCustomer, address: e.target.value})}
+                  rows={3}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', resize: 'vertical' }}
+                />
+              </div>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Nivel de Descuento:</label>
+                <select
+                  value={newCustomer.discountLevel}
+                  onChange={(e) => setNewCustomer({...newCustomer, discountLevel: e.target.value})}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                >
+                  <option value="Bronze">Bronze (0% descuento)</option>
+                  <option value="Silver">Silver (5% descuento)</option>
+                  <option value="Gold">Gold (8% descuento)</option>
+                  <option value="Platinum">Platinum (12% descuento)</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button 
+                  type="button" 
+                  onClick={resetForm}
+                  style={{ padding: '8px 16px', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  style={{ background: '#4caf50', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  {editingCustomer ? 'Actualizar' : 'Crear'} Cliente
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Tabla de clientes */}
+      <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead style={{ background: '#f5f5f5' }}>
+            <tr>
+              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Nombre</th>
+              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Contacto</th>
+              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Dirección</th>
+              <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Nivel</th>
+              <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredCustomers.map((customer) => (
+              <tr key={customer.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                <td style={{ padding: '12px' }}>
+                  <div>
+                    <div style={{ fontWeight: 'bold' }}>{customer.name}</div>
+                    {customer.email && (
+                      <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{customer.email}</div>
+                    )}
+                  </div>
+                </td>
+                <td style={{ padding: '12px' }}>
+                  {customer.phone && (
+                    <div style={{ fontSize: '14px' }}>{customer.phone}</div>
+                  )}
+                </td>
+                <td style={{ padding: '12px' }}>
+                  {customer.address && (
+                    <div style={{ fontSize: '14px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {customer.address}
+                    </div>
+                  )}
+                </td>
+                <td style={{ padding: '12px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    color: 'white',
+                    background: getDiscountColor(customer.discountLevel)
+                  }}>
+                    {customer.discountLevel}
+                  </span>
+                </td>
+                <td style={{ padding: '12px', textAlign: 'center' }}>
+                  <button 
+                    onClick={() => handleEdit(customer)}
+                    style={{ marginRight: '8px', padding: '4px 8px', border: '1px solid #2196f3', background: 'white', color: '#2196f3', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Editar
+                  </button>
+                  <button 
+                    onClick={() => handleDelete(customer.id)}
+                    style={{ padding: '4px 8px', border: '1px solid #d32f2f', background: 'white', color: '#d32f2f', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Eliminar
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 const SimpleComponent = ({ title, icon }: { title: string; icon: string }) => (
   <div style={{ padding: '20px' }}>
     <h1>{icon} {title}</h1>
@@ -890,7 +1168,7 @@ function App() {
       case 'products':
         return <Products />;
       case 'customers':
-        return <SimpleComponent title="Clientes" icon="👥" />;
+        return <Customers />;
       case 'cash-session':
         return <SimpleComponent title="Corte de Caja" icon="💰" />;
       case 'reports':
