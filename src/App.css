@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
 * {
   box-sizing: border-box;
 }
@@ -10,6 +12,185 @@ body {
   overflow: hidden;
   color: #2c3e50;
 }
+
+/* === Luxury / Jewelry Theme Additions === */
+
+
+:root {
+  --gold: #c9a13b;
+  --gold-soft: #f5e7b7;
+  --gold-glow: rgba(201,161,59,0.13);
+  --platinum: #f4f4f7;
+  --silver: #e0e0e0;
+  --bronze: #bfa074;
+  --accent: #e6e6ed;
+  --text-main: #232323;
+  --text-soft: #6a6a6a;
+  --bg-main: #f9f9fb;
+  --bg-panel: #fff;
+  --bg-sidebar: #f5f5f7;
+  --border: #e5e5ea;
+  --radius-l: 18px;
+  --radius-m: 12px;
+  --radius-s: 7px;
+  --transition: 0.32s cubic-bezier(.4,.0,.2,1);
+  --font-display: 'Playfair Display', serif;
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+
+body.jewelry-theme, .app-shell.jewelry-theme {
+  font-family: var(--font-sans);
+  background: var(--bg-main);
+  color: var(--text-main);
+  position: relative;
+}
+
+body.jewelry-theme:before, .app-shell.jewelry-theme:before {
+  display: none;
+}
+
+
+.luxury-sidebar {
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  position: relative;
+  box-shadow: 2px 0 16px 0 rgba(180,180,200,0.07);
+}
+.luxury-sidebar:after {
+  display: none;
+}
+
+.sidebar-brand {
+  font-family: var(--font-display);
+  letter-spacing: .5px;
+  color: var(--gold);
+  background: none;
+  filter: none;
+}
+
+
+.nav-button {
+  position: relative;
+  font-weight: 500;
+  letter-spacing:.3px;
+  color: var(--text-main);
+  background: none;
+  border-radius: var(--radius-m);
+  transition: var(--transition);
+}
+.nav-button.active {
+  background: var(--gold-glow);
+  color: var(--gold);
+  font-weight: 600;
+  box-shadow: 0 2px 8px 0 rgba(201,161,59,0.07);
+}
+.nav-button:not(.active):hover {
+  background: var(--accent) !important;
+  color: var(--gold);
+  transform: translateX(4px) !important;
+}
+
+.main-content.luxury-main {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-main);
+}
+
+/* Cards */
+.lux-grid { display:grid; gap:28px; }
+.lux-grid { width:100%; }
+@media (max-width: 900px){
+  .lux-grid { gap:20px; }
+  .lux-dashboard { padding:32px 28px 48px !important; }
+  .luxury-sidebar { width: clamp(200px, 55vw, 260px) !important; }
+}
+@media (max-width: 640px){
+  .lux-dashboard { padding:28px 20px 48px !important; }
+  .gradient-title { font-size: 34px !important; }
+  .stat-value { font-size:34px !important; }
+  .lux-grid { grid-template-columns: repeat(auto-fit,minmax(180px,1fr)) !important; }
+}
+
+.stat-card {
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  padding: 26px 26px 24px;
+  border-radius: var(--radius-l);
+  overflow:hidden;
+  box-shadow: 0 2px 12px 0 rgba(180,180,200,0.07);
+  transition: var(--transition);
+}
+.stat-card:before {
+  display: none;
+}
+.stat-card:hover { transform:translateY(-3px); box-shadow:0 8px 24px -8px var(--gold-glow); }
+.stat-card h3 { font-family:var(--font-sans); letter-spacing:.5px; color: var(--text-soft); }
+.stat-value { font-family: var(--font-display); font-size:40px; line-height:1; margin:10px 0 4px; color: var(--text-main); background:none; }
+
+/* Level Badges */
+
+.level-badge {
+  position:relative; display:inline-flex; align-items:center; gap:4px;
+  padding:6px 14px; border-radius: 30px; font-size:12px; font-weight:600;
+  letter-spacing:.5px; text-transform:uppercase; overflow:hidden;
+  border:1px solid var(--border);
+  background: var(--accent);
+  color: var(--text-main);
+  box-shadow:0 1px 4px 0 rgba(180,180,200,0.07);
+}
+.level-bronze { background: var(--bronze); color: #fff; }
+.level-silver { background: var(--silver); color: #232323; }
+.level-gold { background: var(--gold); color: #fff; }
+.level-platinum { background: var(--platinum); color: #232323; }
+
+/* Customer Type */
+.chip { padding:4px 10px; border-radius:16px; font-size:11px; font-weight:600; letter-spacing:.3px; background: var(--accent); color: var(--text-main); }
+
+/* Buttons */
+
+.btn-gold {
+  background: var(--gold);
+  color: #fff;
+  font-weight:600;
+  border:none;
+  border-radius: var(--radius-m);
+  padding:12px 26px;
+  font-size:15px;
+  cursor:pointer;
+  position:relative;
+  overflow:hidden;
+  box-shadow:0 2px 8px 0 var(--gold-glow);
+  transition:var(--transition);
+}
+.btn-gold:hover { background: var(--gold-soft); color: var(--text-main); }
+
+/* Table refinement */
+table.lux-table { border-collapse:separate; border-spacing:0 6px; width:100%; }
+table.lux-table thead th { font-size:12px; text-transform:uppercase; letter-spacing:1px; font-weight:600; color:#b8c2cf; background:transparent; padding:10px 14px; }
+table.lux-table tbody tr { background: linear-gradient(145deg,rgba(255,255,255,0.035),rgba(255,255,255,0.02)); transition:var(--transition); }
+table.lux-table tbody tr:hover { transform:translateY(-2px); box-shadow:0 6px 18px -8px rgba(0,0,0,0.55); }
+table.lux-table tbody td { border-top:1px solid rgba(255,255,255,0.05); border-bottom:1px solid rgba(255,255,255,0.05); }
+table.lux-table tbody tr td:first-child { border-left:1px solid rgba(255,255,255,0.05); border-top-left-radius:12px; border-bottom-left-radius:12px; }
+table.lux-table tbody tr td:last-child { border-right:1px solid rgba(255,255,255,0.05); border-top-right-radius:12px; border-bottom-right-radius:12px; }
+
+/* Forms */
+.lux-form-section { background: var(--bg-panel); padding:22px 24px 26px; border-radius: var(--radius-l); border:1px solid var(--border); box-shadow:0 1px 4px 0 rgba(180,180,200,0.07); }
+.lux-form-section h3 { font-family:var(--font-display); letter-spacing:.6px; font-size:20px; margin-top:0; }
+.lux-input, .lux-select, .lux-textarea { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#e6ecf2; padding:10px 14px; border-radius:12px; font-size:14px; width:100%; transition:var(--transition); }
+.lux-input:focus, .lux-select:focus, .lux-textarea:focus { border-color:var(--gold); box-shadow:0 0 0 3px rgba(212,175,55,0.25); }
+
+/* Utility */
+.divider-glow { height:1px; background:linear-gradient(90deg,transparent,var(--gold),transparent); margin:32px 0; opacity:.5; }
+.text-gold { color:var(--gold); }
+.gradient-title { font-family:var(--font-display); color: var(--gold); background:none; letter-spacing:1px; }
+
+/* Scrollbar dark adapt */
+.jewelry-theme ::-webkit-scrollbar-track { background: #f0f0f0; }
+.jewelry-theme ::-webkit-scrollbar-thumb { background: var(--silver); border-radius:4px; border:1px solid var(--border); }
+.jewelry-theme ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
 
 #root {
   height: 100vh;

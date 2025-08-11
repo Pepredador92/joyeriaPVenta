@@ -46,18 +46,15 @@ const Dashboard = () => {
           window.electronAPI.getCustomers(),
           window.electronAPI.getSales()
         ]);
-        
-        // Calcular ventas de hoy
         const today = new Date().toDateString();
         const salesToday = sales
           .filter((sale: any) => new Date(sale.createdAt).toDateString() === today)
           .reduce((sum: number, sale: any) => sum + sale.total, 0);
-
         setStats({
-          salesToday: salesToday,
-          totalProducts: products.length,
-          totalCustomers: customers.length,
-          salesCount: sales.length
+          salesToday,
+            totalProducts: products.length,
+            totalCustomers: customers.length,
+            salesCount: sales.length
         });
       }
     } catch (error) {
@@ -66,109 +63,28 @@ const Dashboard = () => {
   };
 
   return (
-    <div style={{ padding: '30px', background: 'transparent' }}>
-      <h1 style={{ 
-        color: '#1a202c', 
-        fontSize: '2.5rem', 
-        fontWeight: '700',
-        textAlign: 'center',
-        marginBottom: '2rem',
-        textShadow: '0 2px 4px rgba(0,0,0,0.1)'
-      }}>
-        📊 Dashboard Principal
-      </h1>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '25px', marginTop: '20px' }}>
-        <div style={{ 
-          background: 'linear-gradient(135deg, #4299e1 0%, #3182ce 100%)', 
-          padding: '25px', 
-          borderRadius: '15px', 
-          textAlign: 'center',
-          color: 'white',
-          boxShadow: '0 8px 25px rgba(66, 153, 225, 0.3)',
-          transition: 'transform 0.3s ease, box-shadow 0.3s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.transform = 'translateY(-5px)';
-          e.currentTarget.style.boxShadow = '0 12px 35px rgba(66, 153, 225, 0.4)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = '0 8px 25px rgba(66, 153, 225, 0.3)';
-        }}>
-          <h3 style={{ color: 'white', fontSize: '1.2rem', marginBottom: '15px' }}>💰 Ventas Hoy</h3>
-          <p style={{ fontSize: '32px', margin: '15px 0', color: 'white', fontWeight: 'bold' }}>
-            ${stats.salesToday.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-          </p>
-          <small style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px' }}>
-            {stats.salesCount > 0 ? `${stats.salesCount} ventas totales` : 'Sin ventas hoy'}
-          </small>
+  <div className="lux-dashboard" style={{ padding: '36px min(4vw,64px) 60px', width:'100%', boxSizing:'border-box' }}>
+      <h1 className="gradient-title" style={{ textAlign:'center', fontSize:'46px', margin:'0 0 48px', fontWeight:600 }}>📊 Visión General</h1>
+  <div className="lux-grid" style={{ gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', width:'100%' }}>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ventas Hoy</h3>
+          <div className="stat-value">${stats.salesToday.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>{stats.salesCount > 0 ? `${stats.salesCount} ventas totales` : 'Sin ventas hoy'}</small>
         </div>
-        <div style={{ 
-          background: 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)', 
-          padding: '25px', 
-          borderRadius: '15px', 
-          textAlign: 'center',
-          color: 'white',
-          boxShadow: '0 8px 25px rgba(72, 187, 120, 0.3)',
-          transition: 'transform 0.3s ease, box-shadow 0.3s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.transform = 'translateY(-5px)';
-          e.currentTarget.style.boxShadow = '0 12px 35px rgba(72, 187, 120, 0.4)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = '0 8px 25px rgba(72, 187, 120, 0.3)';
-        }}>
-          <h3 style={{ color: 'white', fontSize: '1.2rem', marginBottom: '15px' }}>📦 Productos</h3>
-          <p style={{ fontSize: '32px', margin: '15px 0', color: 'white', fontWeight: 'bold' }}>
-            {stats.totalProducts}
-          </p>
-          <small style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px' }}>En inventario</small>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Productos</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{stats.totalProducts}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Inventario total</small>
         </div>
-        <div style={{ 
-          background: 'linear-gradient(135deg, #ed8936 0%, #dd6b20 100%)', 
-          padding: '25px', 
-          borderRadius: '15px', 
-          textAlign: 'center',
-          color: 'white',
-          boxShadow: '0 8px 25px rgba(237, 137, 54, 0.3)',
-          transition: 'transform 0.3s ease, box-shadow 0.3s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.transform = 'translateY(-5px)';
-          e.currentTarget.style.boxShadow = '0 12px 35px rgba(237, 137, 54, 0.4)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = '0 8px 25px rgba(237, 137, 54, 0.3)';
-        }}>
-          <h3 style={{ color: 'white', fontSize: '1.2rem', marginBottom: '15px' }}>👥 Clientes</h3>
-          <p style={{ fontSize: '32px', margin: '15px 0', color: 'white', fontWeight: 'bold' }}>
-            {stats.totalCustomers}
-          </p>
-          <small style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px' }}>Registrados</small>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Clientes</h3>
+            <div className="stat-value" style={{fontSize:'42px'}}>{stats.totalCustomers}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Registrados</small>
         </div>
-        <div style={{ 
-          background: 'linear-gradient(135deg, #9f7aea 0%, #805ad5 100%)', 
-          padding: '25px', 
-          borderRadius: '15px', 
-          textAlign: 'center',
-          color: 'white',
-          boxShadow: '0 8px 25px rgba(159, 122, 234, 0.3)',
-          transition: 'transform 0.3s ease, box-shadow 0.3s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.transform = 'translateY(-5px)';
-          e.currentTarget.style.boxShadow = '0 12px 35px rgba(159, 122, 234, 0.4)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = '0 8px 25px rgba(159, 122, 234, 0.3)';
-        }}>
-          <h3 style={{ color: 'white', fontSize: '1.2rem', marginBottom: '15px' }}>💼 Sesión</h3>
-          <p style={{ fontSize: '24px', margin: '15px 0', color: 'white', fontWeight: 'bold' }}>Abierta</p>
-          <small style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px' }}>Desde 09:00 AM</small>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ventas Totales</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{stats.salesCount}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Acumuladas</small>
         </div>
       </div>
     </div>
@@ -590,6 +506,14 @@ const Products = () => {
     sku: '', name: '', price: 0, stock: 0, category: '', description: ''
   });
 
+  // Función para generar un SKU único tipo JOY-YYYYMMDD-XXXX
+  const generateSKU = () => {
+    const date = new Date();
+    const yyyymmdd = date.getFullYear().toString() + String(date.getMonth()+1).padStart(2,'0') + String(date.getDate()).padStart(2,'0');
+    const random = Math.floor(1000 + Math.random() * 9000);
+    return `JOY-${yyyymmdd}-${random}`;
+  };
+
   useEffect(() => {
     loadProducts();
   }, []);
@@ -650,6 +574,20 @@ const Products = () => {
     setShowAddForm(true);
   };
 
+  // Cuando se abre el formulario de nuevo producto, autogenerar SKU
+  const handleShowAddForm = () => {
+    setEditingProduct(null);
+    let newSku = '';
+    let exists = true;
+    // Intentar hasta que no exista
+    while (exists) {
+      newSku = generateSKU();
+      exists = products.some(p => p.sku === newSku);
+    }
+    setNewProduct({ sku: newSku, name: '', price: 0, stock: 0, category: '', description: '' });
+    setShowAddForm(true);
+  };
+
   const resetForm = () => {
     setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: '', description: '' });
     setEditingProduct(null);
@@ -667,7 +605,7 @@ const Products = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1>📦 Gestión de Productos</h1>
         <button 
-          onClick={() => setShowAddForm(true)}
+          onClick={handleShowAddForm}
           style={{ 
             background: '#2196f3', 
             color: 'white', 
@@ -714,9 +652,10 @@ const Products = () => {
                   <input
                     type="text"
                     value={newProduct.sku}
-                    onChange={(e) => setNewProduct({...newProduct, sku: e.target.value})}
+                    readOnly={!editingProduct}
+                    onChange={editingProduct ? (e) => setNewProduct({...newProduct, sku: e.target.value}) : undefined}
                     required
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', background: editingProduct ? 'white' : '#f5f5f5', color: editingProduct ? 'black' : '#888' }}
                   />
                 </div>
                 <div>
@@ -872,14 +811,17 @@ const Products = () => {
 // Componente de Corte de Caja
 const CashSession = () => {
   const [cashSessions, setCashSessions] = useState<any[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
+  const [detailSession, setDetailSession] = useState<any>(null);
   const [newSession, setNewSession] = useState({
     initialAmount: 0, finalAmount: 0, notes: ''
   });
 
   useEffect(() => {
     loadCashSessions();
+    loadSales();
   }, []);
 
   const loadCashSessions = async () => {
@@ -893,17 +835,57 @@ const CashSession = () => {
     }
   };
 
+  const loadSales = async () => {
+    try {
+      if (window.electronAPI) {
+        const data = await window.electronAPI.getSales();
+        setSales(data);
+      }
+    } catch (error) {
+      console.error('Error loading sales:', error);
+    }
+  };
+
+  // Filtrar ventas que caen dentro del rango de una sesión
+  const getSessionSales = (session: any) => {
+    const start = new Date(session.startTime);
+    const end = session.endTime ? new Date(session.endTime) : new Date();
+    return sales.filter((s: any) => {
+      const d = new Date(s.createdAt);
+      return d >= start && d <= end;
+    });
+  };
+
+  // Calcular resumen de una sesión (por método de pago y totales)
+  const summarizeSession = (session: any) => {
+    const list = getSessionSales(session);
+    const byMethod = { Efectivo: 0, Tarjeta: 0, Transferencia: 0, Otro: 0 } as Record<string, number>;
+    let total = 0, count = 0, totalTax = 0, totalDiscount = 0;
+    list.forEach((s: any) => {
+      const m = s.paymentMethod || 'Otro';
+      byMethod[m] = (byMethod[m] || 0) + (s.total || 0);
+      total += s.total || 0;
+      totalTax += s.tax || 0;
+      totalDiscount += s.discount || 0;
+      count += 1;
+    });
+    const avg = count ? total / count : 0;
+    const expectedCash = (session.initialAmount || 0) + (byMethod['Efectivo'] || 0);
+    return { total, count, avg, totalTax, totalDiscount, byMethod, expectedCash };
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       if (window.electronAPI) {
         if (editingSession) {
+          const summary = summarizeSession(editingSession);
           await window.electronAPI.updateCashSession(editingSession.id, {
             ...newSession,
             endTime: new Date().toISOString(),
             status: 'Cerrada',
-            expectedAmount: newSession.initialAmount,
-            difference: newSession.finalAmount - newSession.initialAmount
+            expectedAmount: summary.expectedCash,
+            difference: newSession.finalAmount - summary.expectedCash
           });
         } else {
           await window.electronAPI.createCashSession({
@@ -914,6 +896,7 @@ const CashSession = () => {
         }
         resetForm();
         loadCashSessions();
+        loadSales();
       }
     } catch (error) {
       console.error('Error saving cash session:', error);
@@ -950,7 +933,7 @@ const CashSession = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1>💰 Corte de Caja</h1>
         <button 
-          onClick={() => setShowAddForm(true)}
+          onClick={() => { setShowAddForm(true); setEditingSession(null); setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' }); }}
           style={{ 
             background: '#4caf50', 
             color: 'white', 
@@ -971,7 +954,7 @@ const CashSession = () => {
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
         }}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', minWidth: '400px' }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', minWidth: '520px', maxWidth:'90vw' }}>
             <h2>{editingSession ? 'Cerrar Sesión' : 'Nueva Sesión de Caja'}</h2>
             <form onSubmit={handleSubmit}>
               <div style={{ marginBottom: '15px' }}>
@@ -1016,17 +999,28 @@ const CashSession = () => {
                   style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', resize: 'vertical' }}
                 />
               </div>
-              {editingSession && (
+              {editingSession && (() => { const s = summarizeSession(editingSession); return (
                 <div style={{ 
                   marginBottom: '20px', 
-                  padding: '10px', 
-                  background: '#e3f2fd', 
-                  borderRadius: '4px',
-                  border: '1px solid #2196f3'
+                  padding: '14px', 
+                  background: '#fafafa', 
+                  borderRadius: '8px',
+                  border: '1px solid #e0e0e0'
                 }}>
-                  <div>Diferencia: ${(newSession.finalAmount - newSession.initialAmount).toFixed(2)}</div>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:'12px' }}>
+                    <div><strong>Ventas Totales</strong><div>${s.total.toFixed(2)}</div></div>
+                    <div><strong>Efectivo</strong><div>${(s.byMethod['Efectivo']||0).toFixed(2)}</div></div>
+                    <div><strong>Tarjeta</strong><div>${(s.byMethod['Tarjeta']||0).toFixed(2)}</div></div>
+                    <div><strong>Transferencia</strong><div>${(s.byMethod['Transferencia']||0).toFixed(2)}</div></div>
+                  </div>
+                  <div style={{ marginTop:'10px' }}>
+                    <strong>Efectivo Esperado</strong>: ${s.expectedCash.toFixed(2)}
+                    <span style={{ marginLeft:12, fontWeight:'bold', color:(newSession.finalAmount - s.expectedCash)===0? '#4caf50' : (newSession.finalAmount - s.expectedCash)>0 ? '#2e7d32' : '#d32f2f' }}>
+                      Diferencia: ${(newSession.finalAmount - s.expectedCash).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
-              )}
+              ); })()}
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                 <button 
                   type="button" 
@@ -1102,6 +1096,12 @@ const CashSession = () => {
                   </span>
                 </td>
                 <td style={{ padding: '12px', textAlign: 'center' }}>
+                  <button 
+                    onClick={() => setDetailSession(session)}
+                    style={{ marginRight:'8px', padding: '4px 8px', border: '1px solid #2196f3', background: 'white', color: '#2196f3', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Ver detalle
+                  </button>
                   {session.status === 'Abierta' && (
                     <button 
                       onClick={() => handleEdit(session)}
@@ -1123,6 +1123,41 @@ const CashSession = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Modal de detalle */}
+      {detailSession && (() => { const s = summarizeSession(detailSession); return (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1001 }}>
+          <div style={{ background:'#fff', borderRadius:8, padding:24, width:'min(860px, 94vw)', maxHeight:'90vh', overflow:'auto', border:'1px solid #e0e0e0' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+              <h3 style={{ margin:0 }}>📊 Detalle de Sesión</h3>
+              <button onClick={() => setDetailSession(null)} style={{ border:'none', background:'#eee', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Cerrar</button>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:16, marginBottom:16 }}>
+              <div className="stat-card" style={{ padding:16 }}><div style={{color:'#6a6a6a'}}>Ventas Totales</div><div style={{fontWeight:700, fontSize:22}}>${s.total.toFixed(2)}</div></div>
+              <div className="stat-card" style={{ padding:16 }}><div style={{color:'#6a6a6a'}}>Transacciones</div><div style={{fontWeight:700, fontSize:22}}>{s.count}</div></div>
+              <div className="stat-card" style={{ padding:16 }}><div style={{color:'#6a6a6a'}}>Ticket Promedio</div><div style={{fontWeight:700, fontSize:22}}>${s.avg.toFixed(2)}</div></div>
+              <div className="stat-card" style={{ padding:16 }}><div style={{color:'#6a6a6a'}}>Impuestos</div><div style={{fontWeight:700, fontSize:22}}>${s.totalTax.toFixed(2)}</div></div>
+              <div className="stat-card" style={{ padding:16 }}><div style={{color:'#6a6a6a'}}>Descuentos</div><div style={{fontWeight:700, fontSize:22}}>${s.totalDiscount.toFixed(2)}</div></div>
+            </div>
+            <div style={{ margin:'12px 0 18px', padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fafafa' }}>
+              <strong>Por método de pago</strong>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, marginTop:8 }}>
+                <div>Efectivo: <strong>${(s.byMethod['Efectivo']||0).toFixed(2)}</strong></div>
+                <div>Tarjeta: <strong>${(s.byMethod['Tarjeta']||0).toFixed(2)}</strong></div>
+                <div>Transferencia: <strong>${(s.byMethod['Transferencia']||0).toFixed(2)}</strong></div>
+                <div>Otro: <strong>${(s.byMethod['Otro']||0).toFixed(2)}</strong></div>
+              </div>
+            </div>
+            <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
+              <div><strong>Efectivo Esperado</strong>: ${s.expectedCash.toFixed(2)}</div>
+              <div><strong>Efectivo Reportado</strong>: ${detailSession.finalAmount ? detailSession.finalAmount.toFixed(2) : 0}</div>
+              <div style={{ marginTop:6, fontWeight:'bold', color:(detailSession.finalAmount - s.expectedCash)===0? '#4caf50' : (detailSession.finalAmount - s.expectedCash)>0 ? '#2e7d32' : '#d32f2f' }}>
+                Diferencia: ${(detailSession.finalAmount - s.expectedCash).toFixed(2)}
+              </div>
+            </div>
+          </div>
+        </div>
+      ); })()}
     </div>
   );
 };
@@ -1789,60 +1824,7 @@ const Settings = () => {
     alert('Configuración de clasificación de clientes actualizada correctamente');
   };
 
-  // Función para calcular el nivel automático del cliente
-  const calculateCustomerLevel = async (customerId?: number) => {
-    if (!customerId) return 'Bronze';
-    
-    try {
-      const [salesData, customerData] = await Promise.all([
-        window.electronAPI?.getSales() || [],
-        window.electronAPI?.getCustomers() || []
-      ]);
-
-      const customer = customerData.find((c: any) => c.id === customerId);
-      if (!customer) return 'Bronze';
-
-      const customerSales = salesData.filter((sale: any) => sale.customerId === customerId);
-      
-      if (customerSales.length === 0) return 'Bronze';
-
-      // Filtrar ventas según el período de evaluación
-      const evaluationDate = new Date();
-      evaluationDate.setMonth(evaluationDate.getMonth() - clientClassificationSettings.evaluationPeriod);
-      
-      const recentSales = customerSales.filter((sale: any) => 
-        new Date(sale.createdAt) >= evaluationDate
-      );
-
-      const totalAmount = recentSales.reduce((sum: number, sale: any) => sum + sale.total, 0);
-      const totalPurchases = recentSales.length;
-
-      // Determinar nivel según configuración
-      const { classificationMethod, bronzeToSilver, silverToGold, goldToPlatinum } = clientClassificationSettings;
-
-      let level = 'Bronze';
-
-      if (classificationMethod === 'amount') {
-        if (totalAmount >= goldToPlatinum.amount) level = 'Platinum';
-        else if (totalAmount >= silverToGold.amount) level = 'Gold';
-        else if (totalAmount >= bronzeToSilver.amount) level = 'Silver';
-      } else if (classificationMethod === 'frequency') {
-        if (totalPurchases >= goldToPlatinum.frequency) level = 'Platinum';
-        else if (totalPurchases >= silverToGold.frequency) level = 'Gold';
-        else if (totalPurchases >= bronzeToSilver.frequency) level = 'Silver';
-      } else if (classificationMethod === 'hybrid') {
-        // Método híbrido: ambos criterios deben cumplirse
-        if (totalAmount >= goldToPlatinum.amount && totalPurchases >= goldToPlatinum.frequency) level = 'Platinum';
-        else if (totalAmount >= silverToGold.amount && totalPurchases >= silverToGold.frequency) level = 'Gold';
-        else if (totalAmount >= bronzeToSilver.amount && totalPurchases >= bronzeToSilver.frequency) level = 'Silver';
-      }
-
-      return level;
-    } catch (error) {
-      console.error('Error calculating customer level:', error);
-      return 'Bronze';
-    }
-  };
+  // (eliminado) calculateCustomerLevel no utilizado; usamos calculateCustomerLevelBasic en el módulo de Clientes
 
   const loadSettings = async () => {
     try {
@@ -2965,51 +2947,7 @@ const Customers = () => {
     }
   };
 
-  const addPreferredCategory = () => {
-    setNewCustomer(prev => ({
-      ...prev,
-      preferredCategories: [...prev.preferredCategories, '']
-    }));
-  };
-
-  const updatePreferredCategory = (index: number, value: string) => {
-    const updated = [...newCustomer.preferredCategories];
-    updated[index] = value;
-    setNewCustomer(prev => ({
-      ...prev,
-      preferredCategories: updated
-    }));
-  };
-
-  const removePreferredCategory = (index: number) => {
-    setNewCustomer(prev => ({
-      ...prev,
-      preferredCategories: prev.preferredCategories.filter((_, i) => i !== index)
-    }));
-  };
-
-  const addSpecialOccasion = () => {
-    setNewCustomer(prev => ({
-      ...prev,
-      specialOccasions: [...prev.specialOccasions, '']
-    }));
-  };
-
-  const updateSpecialOccasion = (index: number, value: string) => {
-    const updated = [...newCustomer.specialOccasions];
-    updated[index] = value;
-    setNewCustomer(prev => ({
-      ...prev,
-      specialOccasions: updated
-    }));
-  };
-
-  const removeSpecialOccasion = (index: number) => {
-    setNewCustomer(prev => ({
-      ...prev,
-      specialOccasions: prev.specialOccasions.filter((_, i) => i !== index)
-    }));
-  };
+  // (eliminados) helpers de categorías/ocasiones no usados actualmente
 
   const calculateAge = (birthDate: string) => {
     if (!birthDate) return null;
@@ -3604,89 +3542,37 @@ function App() {
   ];
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      height: '100vh',
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", roboto, sans-serif',
-      background: '#f5f5f5'
-    }}>
-      {/* Sidebar */}
-      <div style={{ 
-        width: '280px', 
-        background: 'linear-gradient(135deg, #2c3e50 0%, #3498db 50%, #9b59b6 100%)', 
-        color: 'white',
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: '4px 0 15px rgba(0,0,0,0.1)'
-      }}>
-        <div style={{ padding: '25px', borderBottom: '1px solid rgba(255,255,255,0.2)', textAlign: 'center' }}>
-          <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>
-            💎 Joyería PVenta
-          </h2>
-          <p style={{ margin: '8px 0 0 0', fontSize: '14px', opacity: 0.9, color: 'rgba(255,255,255,0.9)' }}>
-            Sistema POS Profesional
-          </p>
+    <div className="app-shell jewelry-theme" style={{ display:'flex', height:'100vh', width:'100vw', overflow:'hidden' }}>
+      <div className="luxury-sidebar" style={{ width:'clamp(240px,18vw,300px)', display:'flex', flexDirection:'column', flexShrink:0 }}>
+        <div style={{ padding:'32px 30px 28px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
+          <h2 className="sidebar-brand" style={{ margin:0, fontSize:'28px', fontWeight:600 }}>Joyería PVenta</h2>
+          <div style={{ marginTop:'10px', fontSize:'13px', letterSpacing:'.5px', color:'#c5ced8' }}>Sistema POS Profesional</div>
         </div>
-        
-        <nav style={{ flex: 1, padding: '25px 0' }}>
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setCurrentView(item.id)}
+        <nav style={{ flex:1, padding:'22px 0 28px' }}>
+          {navItems.map(item => (
+            <button key={item.id} onClick={()=>setCurrentView(item.id)}
+              className={`nav-button ${currentView===item.id ? 'active' : ''}`}
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '15px',
-                width: '100%',
-                padding: '15px 25px',
-                margin: '4px 0',
-                border: 'none',
-                background: currentView === item.id ? 'rgba(255,255,255,0.25)' : 'transparent',
-                color: 'white',
-                fontSize: '16px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                textAlign: 'left',
-                borderRadius: currentView === item.id ? '0 25px 25px 0' : '0',
-                fontWeight: currentView === item.id ? '600' : '400',
-                boxShadow: currentView === item.id ? 'inset 4px 0 0 rgba(255,255,255,0.6)' : 'none'
-              }}
-              onMouseOver={(e) => {
-                if (currentView !== item.id) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.15)';
-                  e.currentTarget.style.transform = 'translateX(5px)';
-                }
-              }}
-              onMouseOut={(e) => {
-                if (currentView !== item.id) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.transform = 'translateX(0)';
-                }
-              }}
-            >
-              <span style={{ fontSize: '22px' }}>{item.icon}</span>
-              <span>{item.label}</span>
-              {currentView === item.id && (
-                <span style={{ marginLeft: 'auto', fontSize: '12px' }}>●</span>
-              )}
+                width:'100%', border:'none', background:'transparent', color:'#d7dde4',
+                display:'flex', alignItems:'center', gap:'16px', padding:'14px 30px 14px 34px',
+                fontSize:'15px', cursor:'pointer', transition:'var(--transition)',
+                fontFamily:'var(--font-sans)', position:'relative'
+              }}>
+              <span style={{ fontSize:'22px', filter:'drop-shadow(0 2px 4px rgba(0,0,0,0.4))' }}>{item.icon}</span>
+              <span style={{ fontWeight: currentView===item.id ? 600:500 }}>{item.label}</span>
+              {currentView===item.id && <span style={{ marginLeft:'auto', fontSize:'11px', letterSpacing:'2px', color:'var(--gold)' }}>ACTIVO</span>}
             </button>
           ))}
         </nav>
-        
-        <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '14px', opacity: 0.8 }}>
-          <div>Version 1.0.0</div>
-          <div>© 2024 Joyería PVenta</div>
+        <div style={{ padding:'22px 32px 30px', fontSize:'12px', letterSpacing:'.5px', color:'#9aa4b1', borderTop:'1px solid rgba(255,255,255,0.05)' }}>
+          <div>Versión 1.0.0</div>
+          <div style={{ marginTop:'4px' }}>© 2025 Joyería PVenta</div>
         </div>
       </div>
-      
-      {/* Main Content */}
-      <div style={{ 
-        flex: 1, 
-        overflow: 'auto', 
-        background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
-        minHeight: '100vh'
-      }}>
+      <div className="main-content luxury-main" style={{ flex:1, overflow:'auto', minWidth:0, display:'flex', flexDirection:'column' }}>
+        <div style={{ flex:1, display:'flex', flexDirection:'column', width:'100%', maxWidth:'1920px', margin:'0 auto', alignSelf:'stretch' }}>
         {renderCurrentView()}
+        </div>
       </div>
     </div>
   );
