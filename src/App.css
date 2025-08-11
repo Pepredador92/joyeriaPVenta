@@ -1,0 +1,115 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", roboto, sans-serif;
+  background: #f8f9fa;
+  overflow: hidden;
+  color: #2c3e50;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* Mejora de títulos y texto */
+h1, h2, h3, h4, h5, h6 {
+  color: #2c3e50;
+  margin: 0 0 1rem 0;
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 2rem;
+  color: #1a202c;
+  border-bottom: 3px solid #4299e1;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+  color: #2d3748;
+}
+
+h3 {
+  font-size: 1.25rem;
+  color: #4a5568;
+}
+
+/* Mejora de contraste para texto */
+p, span, div {
+  color: #4a5568;
+}
+
+label {
+  color: #2d3748;
+  font-weight: 500;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+/* Animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Form styles */
+input, select, textarea {
+  font-family: inherit;
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #2196f3;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.1);
+}
+
+/* Table styles */
+table {
+  font-size: 14px;
+}
+
+tbody tr:hover {
+  background-color: #f9f9f9;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
