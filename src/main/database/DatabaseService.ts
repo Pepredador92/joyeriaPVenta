@@ -682,12 +682,12 @@ class DatabaseService {
     return [...this.sales];
   }
 
-  async createSale(saleData: Omit<Sale, 'id' | 'createdAt' | 'updatedAt'>): Promise<Sale> {
+  async createSale(saleData: Omit<Sale, 'id' | 'createdAt' | 'updatedAt'> & { createdAt?: string }): Promise<Sale> {
     const newSale: Sale = {
       id: Math.max(...this.sales.map(s => s.id), 0) + 1,
       ...saleData,
       status: 'Completada',
-      createdAt: new Date().toISOString(),
+      createdAt: saleData.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     

@@ -312,6 +312,16 @@ class JoyeriaApp {
       }
     });
 
+    // Logging básico
+    ipcMain.handle(IPC_CHANNELS.LOG_INFO, async (_evt, msg: string) => {
+      try { log.info(msg); } catch {}
+      return true;
+    });
+    ipcMain.handle(IPC_CHANNELS.LOG_WARN, async (_evt, msg: string) => {
+      try { log.warn(msg); } catch {}
+      return true;
+    });
+
     log.info('🔗 IPC handlers registered successfully');
   }
 

@@ -20,6 +20,9 @@ declare global {
       updateCashSession: (id: number, sessionData: any) => Promise<any>;
       getSettings: () => Promise<any[]>;
       updateSetting: (key: string, value: string) => Promise<any>;
+  // Logging helpers (optional)
+  logInfo?: (msg: string) => Promise<void>;
+  logWarn?: (msg: string) => Promise<void>;
     };
   }
 }
@@ -34,8 +37,23 @@ const Dashboard = () => {
     salesCount: 0
   });
 
+  // Privacy/masking state
+  const ADMIN_DASHBOARD_PASSWORD = '2468';
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [attempts, setAttempts] = useState(0);
+  const ATTEMPT_LIMIT = 3;
+  const COOLDOWN_MS = 30_000; // 30s
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+
   useEffect(() => {
     loadStats();
+  }, []);
+
+  // Log activation of masking once on mount
+  useEffect(() => {
+    window.electronAPI?.logInfo?.('dashboard_montos_ocultos_activado');
   }, []);
 
   const loadStats = async () => {
@@ -62,13 +80,75 @@ const Dashboard = () => {
     }
   };
 
+  const maskedMoney = () => '••••••';
+  const handleShowAmounts = () => {
+    const now = Date.now();
+    if (cooldownUntil && now < cooldownUntil) {
+      // Still in cooldown; optional warn
+      window.electronAPI?.logWarn?.(`desbloqueo_bloqueado_por_cooldown_dashboard:${Math.ceil((cooldownUntil - now)/1000)}s`);
+      setShowPasswordModal(true);
+      return;
+    }
+    setPasswordInput('');
+    setShowPasswordModal(true);
+    window.electronAPI?.logInfo?.('intento_desbloqueo_dashboard');
+  };
+
+  const handleUnlock = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (passwordInput === ADMIN_DASHBOARD_PASSWORD) {
+      setIsUnlocked(true);
+      setShowPasswordModal(false);
+      setPasswordInput('');
+      setAttempts(0);
+      window.electronAPI?.logInfo?.('desbloqueo_exitoso_dashboard');
+    } else {
+      const next = attempts + 1;
+      setAttempts(next);
+      window.electronAPI?.logWarn?.('desbloqueo_fallido_dashboard');
+      if (next >= ATTEMPT_LIMIT) {
+        const until = Date.now() + COOLDOWN_MS;
+        setCooldownUntil(until);
+        setShowPasswordModal(false);
+        // Auto clear attempts after cooldown
+        setTimeout(() => { setAttempts(0); setCooldownUntil(null); }, COOLDOWN_MS + 50);
+      }
+    }
+  };
+
+  const handleHide = () => {
+    setIsUnlocked(false);
+    window.electronAPI?.logInfo?.('dashboard_montos_ocultos');
+  };
+
+  const secondsLeft = cooldownUntil ? Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000)) : 0;
+
+  // Close modal with Escape
+  useEffect(() => {
+    if (!showPasswordModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowPasswordModal(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showPasswordModal]);
+
   return (
-  <div className="lux-dashboard" style={{ padding: '36px min(4vw,64px) 60px', width:'100%', boxSizing:'border-box' }}>
-      <h1 className="gradient-title" style={{ textAlign:'center', fontSize:'46px', margin:'0 0 48px', fontWeight:600 }}>📊 Visión General</h1>
-  <div className="lux-grid" style={{ gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', width:'100%' }}>
+    <div className="lux-dashboard" style={{ padding: '36px min(4vw,64px) 60px', width:'100%', boxSizing:'border-box' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, margin:'0 0 32px' }}>
+        <h1 className="gradient-title" style={{ textAlign:'left', fontSize:'46px', margin:'0', fontWeight:600 }}>📊 Visión General</h1>
+        <div>
+          {isUnlocked ? (
+            <button onClick={handleHide} style={{ background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'10px 14px', cursor:'pointer' }}>Ocultar montos</button>
+          ) : (
+            <button onClick={handleShowAmounts} style={{ background:'#2f6fed', color:'#fff', border:'none', borderRadius:8, padding:'10px 14px', cursor:'pointer' }}>Mostrar montos</button>
+          )}
+        </div>
+      </div>
+      <div className="lux-grid" style={{ gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', width:'100%' }}>
         <div className="stat-card">
           <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ventas Hoy</h3>
-          <div className="stat-value">${stats.salesToday.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</div>
+          <div className="stat-value">{isUnlocked ? `$${stats.salesToday.toLocaleString('es-MX', { minimumFractionDigits: 2 })}` : maskedMoney()}</div>
           <small style={{ fontSize:'13px', color:'#9aa4b1' }}>{stats.salesCount > 0 ? `${stats.salesCount} ventas totales` : 'Sin ventas hoy'}</small>
         </div>
         <div className="stat-card">
@@ -78,7 +158,7 @@ const Dashboard = () => {
         </div>
         <div className="stat-card">
           <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Clientes</h3>
-            <div className="stat-value" style={{fontSize:'42px'}}>{stats.totalCustomers}</div>
+          <div className="stat-value" style={{fontSize:'42px'}}>{stats.totalCustomers}</div>
           <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Registrados</small>
         </div>
         <div className="stat-card">
@@ -87,6 +167,26 @@ const Dashboard = () => {
           <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Acumuladas</small>
         </div>
       </div>
+
+      {showPasswordModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }}>
+          <form onSubmit={handleUnlock} style={{ background:'#fff', padding:24, borderRadius:12, width:'min(420px, 92vw)', border:'1px solid #e0e0e0', boxShadow:'0 10px 40px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ marginTop:0, marginBottom:12 }}>🔒 Ingresar contraseña</h3>
+            <div style={{ fontSize:13, color:'#666', marginBottom:12 }}>Los montos del dashboard están protegidos.</div>
+            <input type="password" value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} placeholder="Contraseña" autoFocus disabled={!!(cooldownUntil && Date.now()<cooldownUntil)} style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8, marginBottom:10 }} />
+            {attempts>0 && attempts<ATTEMPT_LIMIT && !cooldownUntil && (
+              <div style={{ fontSize:12, color:'#d32f2f', marginBottom:10 }}>Intento fallido. Te quedan {ATTEMPT_LIMIT - attempts} intentos.</div>
+            )}
+            {cooldownUntil && Date.now()<cooldownUntil && (
+              <div style={{ fontSize:12, color:'#d32f2f', marginBottom:10 }}>Demasiados intentos. Intenta nuevamente en {secondsLeft}s.</div>
+            )}
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+              <button type="button" onClick={()=>setShowPasswordModal(false)} style={{ background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'8px 12px', cursor:'pointer' }}>Cancelar</button>
+              <button type="submit" disabled={!!(cooldownUntil && Date.now()<cooldownUntil)} style={{ background:'#2f6fed', color:'#fff', border:'none', borderRadius:8, padding:'8px 12px', cursor:'pointer' }}>Desbloquear</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };
@@ -97,6 +197,19 @@ const Sales = () => {
   const [customers, setCustomers] = useState<any[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  // Nueva Venta MVP (rápida)
+  const [quickSale, setQuickSale] = useState({
+    fecha: new Date().toISOString().split('T')[0],
+    categoria: 'Anillos',
+    cantidad: 1,
+    customerId: '',
+    precioUnitario: 0,
+    metodoPago: 'Efectivo' as 'Efectivo' | 'Tarjeta' | 'Transferencia',
+    notas: ''
+  });
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [pendingSalesCart, setPendingSalesCart] = useState<any[]>([]);
+  const [recentSales, setRecentSales] = useState<any[]>([]);
 
   useEffect(() => {
     loadData();
@@ -105,12 +218,14 @@ const Sales = () => {
   const loadData = async () => {
     try {
       if (window.electronAPI) {
-        const [productsData, customersData] = await Promise.all([
+        const [productsData, customersData, salesData] = await Promise.all([
           window.electronAPI.getProducts(),
-          window.electronAPI.getCustomers()
+          window.electronAPI.getCustomers(),
+          window.electronAPI.getSales()
         ]);
         setProducts(productsData);
         setCustomers(customersData);
+        setRecentSales([...salesData].sort((a:any,b:any)=> new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0,10));
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -188,7 +303,7 @@ const Sales = () => {
         setCart([]);
         setSelectedCustomer(null);
         alert('Venta procesada exitosamente');
-        loadData(); // Recargar datos para actualizar stock
+        loadData(); // Recargar datos para actualizar stock y recientes
       }
     } catch (error) {
       console.error('Error processing sale:', error);
@@ -196,13 +311,86 @@ const Sales = () => {
     }
   };
 
+  const quickTotals = () => {
+    const qty = Math.max(0, Math.floor(quickSale.cantidad));
+    const unit = Math.max(0, Number(quickSale.precioUnitario));
+    const subtotal = qty * unit;
+    const customer = customers.find((c:any)=> String(c.id) === String(quickSale.customerId));
+    const rateMap: Record<string, number> = { Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 };
+    const lvl = customer?.discountLevel || 'Bronze';
+    const discount = +(subtotal * (rateMap[lvl] ?? 0)).toFixed(2);
+    const total = +(subtotal - discount).toFixed(2);
+    return { subtotal, discount, total, rate: (rateMap[lvl] ?? 0) };
+  };
+
+  const submitQuickSale = async (e: React.FormEvent) => {
+    e.preventDefault();
+    // Validar y agregar al carrito de ventas pendientes
+    if (quickSale.cantidad <= 0 || quickSale.precioUnitario <= 0) {
+      alert('Cantidad y precio deben ser mayores a 0');
+      return;
+    }
+  const t = quickTotals();
+    const customer = customers.find((c:any)=> String(c.id) === String(quickSale.customerId));
+    setPendingSalesCart(prev => ([
+      ...prev,
+      {
+        id: Date.now(),
+        fecha: quickSale.fecha,
+        categoria: quickSale.categoria,
+        cantidad: quickSale.cantidad,
+        precioUnitario: quickSale.precioUnitario,
+    subtotal: t.subtotal,
+    discount: t.discount,
+    total: t.total,
+        metodoPago: quickSale.metodoPago,
+        customerId: customer?.id || null,
+        customerName: customer ? customer.name : 'Cliente general',
+        notas: quickSale.notas
+      }
+    ]));
+    // Reset parcial
+    setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: quickSale.categoria, cantidad: 1, customerId: quickSale.customerId, precioUnitario: 0, metodoPago: quickSale.metodoPago, notas: '' });
+  };
+
+  const confirmPendingSales = async () => {
+    if (pendingSalesCart.length === 0) return;
+    try {
+      for (const line of pendingSalesCart) {
+        const saleData = {
+          customerId: line.customerId || undefined,
+          subtotal: line.subtotal,
+          discount: line.discount || 0,
+          tax: 0,
+          total: line.total,
+          paymentMethod: line.metodoPago,
+          items: [{ productId: 0, quantity: line.cantidad, unitPrice: line.precioUnitario, subtotal: line.subtotal }],
+          notes: `Categoría: ${line.categoria}${line.notas ? ' | ' + line.notas : ''}`,
+          createdAt: new Date(line.fecha).toISOString()
+        } as any;
+        if (window.electronAPI) {
+          await window.electronAPI.createSale(saleData);
+        }
+      }
+      setPendingSalesCart([]);
+      loadData();
+      alert('Compra confirmada y guardada');
+    } catch (err) {
+      console.error(err);
+      alert('Error al confirmar la compra');
+    }
+  };
+
+  const cancelPendingSales = () => setPendingSalesCart([]);
+  const removePendingLine = (id:number) => setPendingSalesCart(prev => prev.filter(x=>x.id!==id));
+
   const filteredProducts = products.filter(product =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     product.sku.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div style={{ padding: '30px', display: 'grid', gridTemplateColumns: '1fr 420px', gap: '30px', background: 'transparent', minHeight: '100vh' }}>
+  <div style={{ padding: '30px', display: 'grid', gridTemplateColumns: '1fr 420px', gap: '30px', background: 'transparent', minHeight: '100vh' }}>
       {/* Panel de productos */}
       <div style={{ background: 'white', borderRadius: '15px', padding: '25px', boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}>
         <h1 style={{ 
@@ -244,6 +432,77 @@ const Sales = () => {
               e.target.style.background = '#f7fafc';
             }}
           />
+        </div>
+
+        {/* Nueva Venta (rápida) */}
+        <div style={{ marginBottom: 24, padding: 16, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fafafa' }}>
+          <h3 style={{ marginTop: 0 }}>Nueva Venta</h3>
+          <form onSubmit={submitQuickSale} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Fecha</label>
+              <input type="date" value={quickSale.fecha} onChange={e=>setQuickSale({...quickSale, fecha: e.target.value})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Categoría</label>
+              <select value={quickSale.categoria} onChange={e=>setQuickSale({...quickSale, categoria: e.target.value})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}>
+                <option>Anillos</option>
+                <option>Collares</option>
+                <option>Aretes</option>
+                <option>Pulseras</option>
+                <option>Relojes</option>
+                <option>Otros</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Cliente</label>
+              <input type="text" value={customerQuery} onChange={e=>setCustomerQuery(e.target.value)} placeholder="Buscar por nombre, ID o teléfono" style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6, marginBottom: 6 }} />
+              <select value={quickSale.customerId} onChange={e=>setQuickSale({...quickSale, customerId: e.target.value})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}>
+                <option value="">Cliente general</option>
+                {customers.filter((c:any)=> {
+                  const raw = customerQuery.trim();
+                  const q = raw.toLowerCase();
+                  const qDigits = raw.replace(/\D+/g, '');
+                  if (!q && !qDigits) return true;
+                  const nameMatch = (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q);
+                  const idMatch = String(c.id).includes(raw);
+                  const phones = [c.phone, c.alternatePhone].filter(Boolean) as string[];
+                  const phoneMatch = qDigits.length > 0 && phones.some(p => p.replace(/\D+/g, '').includes(qDigits));
+                  return idMatch || nameMatch || phoneMatch;
+                }).map((c:any)=> (
+                  <option key={c.id} value={c.id}>{c.id} - {c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Cantidad</label>
+              <input type="number" min={1} value={quickSale.cantidad} onChange={e=>setQuickSale({...quickSale, cantidad: parseInt(e.target.value)||0})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Precio Unitario</label>
+              <input type="number" min={0} step="0.01" value={quickSale.precioUnitario} onChange={e=>setQuickSale({...quickSale, precioUnitario: parseFloat(e.target.value)||0})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Método de Pago</label>
+              <select value={quickSale.metodoPago} onChange={e=>setQuickSale({...quickSale, metodoPago: e.target.value as any})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}>
+                <option value="Efectivo">Efectivo</option>
+                <option value="Tarjeta">Tarjeta</option>
+                <option value="Transferencia">Transferencia</option>
+              </select>
+            </div>
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Notas</label>
+              <input type="text" value={quickSale.notas} onChange={e=>setQuickSale({...quickSale, notas: e.target.value})} placeholder="Opcional" style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <button type="submit" style={{ background: '#2196f3', color: 'white', border: 'none', borderRadius: 6, padding: '10px 14px', cursor: 'pointer' }}>Guardar en ventas</button>
+              <button type="button" onClick={()=>setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: 'Anillos', cantidad: 1, customerId: '', precioUnitario: 0, metodoPago: 'Efectivo', notas: '' })} style={{ background: 'white', color: '#333', border: '1px solid #ddd', borderRadius: 6, padding: '10px 14px', cursor: 'pointer' }}>Cancelar</button>
+              {(() => { const t = quickTotals(); return (
+                <div style={{ fontSize: 14, color: '#333' }}>
+                  Total: <strong>${t.total.toFixed(2)}</strong>
+                </div>
+              ); })()}
+            </div>
+          </form>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
@@ -326,6 +585,54 @@ const Sales = () => {
         }}>
           🛍️ Carrito de Compras
         </h2>
+        {/* Ventas en carrito (pendientes) */}
+        <div style={{ marginBottom: 16, padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8 }}>
+            <strong>Ventas en carrito</strong>
+            <div style={{ display:'flex', gap: 8 }}>
+              <button onClick={confirmPendingSales} disabled={pendingSalesCart.length===0} style={{ background:'#4caf50', color:'#fff', border:'none', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Confirmar compra</button>
+              <button onClick={cancelPendingSales} disabled={pendingSalesCart.length===0} style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Cancelar</button>
+            </div>
+          </div>
+          {pendingSalesCart.length===0 ? (
+            <div style={{ color:'#666', fontSize:13 }}>No hay ventas pendientes</div>
+          ) : (
+            <div style={{ display:'grid', gap:8, maxHeight:200, overflow:'auto' }}>
+              {pendingSalesCart.map(line => (
+                <div key={line.id} style={{ border:'1px solid #eee', borderRadius:6, padding:8 }}>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
+                    <div>
+                      <div style={{ fontWeight:600 }}>{line.customerName}</div>
+                      <div style={{ fontSize:12, color:'#555' }}>{new Date(line.fecha).toLocaleDateString('es-MX')} · {line.metodoPago}</div>
+                      <div style={{ fontSize:13 }}>Categoría: <strong>{line.categoria}</strong> · Cant: <strong>{line.cantidad}</strong> · PU: <strong>${Number(line.precioUnitario).toFixed(2)}</strong></div>
+                    </div>
+                    <div style={{ textAlign:'right' }}>
+                      <div style={{ fontWeight:700 }}>${Number(line.total).toFixed(2)}</div>
+                      <button onClick={()=>removePendingLine(line.id)} style={{ marginTop:6, background:'#fff', color:'#d32f2f', border:'1px solid #d32f2f', borderRadius:6, padding:'4px 8px', cursor:'pointer' }}>Eliminar</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Ventas recientes */}
+        <div style={{ marginBottom: 20, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
+          <div style={{ maxHeight: 180, overflow: 'auto' }}>
+            {recentSales.length === 0 ? (
+              <div style={{ color: '#666', fontSize: 13 }}>Sin ventas aún</div>
+            ) : (
+              recentSales.map((s:any)=> (
+                <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', padding: '6px 0', borderBottom: '1px dashed #eee' }}>
+                  <div style={{ fontSize: 13, color: '#333' }}>{new Date(s.createdAt).toLocaleString('es-MX')}</div>
+                  <div style={{ fontWeight: 600 }}>${s.total.toFixed(2)}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
         
         {/* Selección de cliente */}
         <div style={{ marginBottom: '25px', padding: '20px', background: '#f8f9fc', borderRadius: '12px', border: '2px solid #e2e8f0' }}>

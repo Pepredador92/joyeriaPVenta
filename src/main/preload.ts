@@ -26,7 +26,11 @@ const electronAPI = {
 
   // Configuración
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SETTINGS),
-  updateSetting: (key: string, value: string) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTING, key, value)
+  updateSetting: (key: string, value: string) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTING, key, value),
+
+  // Logging
+  logInfo: (msg: string) => ipcRenderer.invoke(IPC_CHANNELS.LOG_INFO, msg),
+  logWarn: (msg: string) => ipcRenderer.invoke(IPC_CHANNELS.LOG_WARN, msg)
 };
 
 // Exponer API al renderer de forma segura

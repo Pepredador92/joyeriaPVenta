@@ -120,5 +120,9 @@ export const IPC_CHANNELS = {
   // Configuración
   GET_SETTINGS: 'get-settings',
   UPDATE_SETTING: 'update-setting',
-  DELETE_SETTING: 'delete-setting'
+  DELETE_SETTING: 'delete-setting',
+
+  // Logging (renderer -> main)
+  LOG_INFO: 'log-info',
+  LOG_WARN: 'log-warn'
 } as const;
