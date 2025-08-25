@@ -110,6 +110,8 @@ export const IPC_CHANNELS = {
   CREATE_SALE: 'create-sale',
   UPDATE_SALE: 'update-sale',
   DELETE_SALE: 'delete-sale',
+  CLEAR_SALES: 'clear-sales',
+  SALES_CHANGED: 'sales-changed',
 
   // Sesiones de caja
   GET_CASH_SESSIONS: 'get-cash-sessions',

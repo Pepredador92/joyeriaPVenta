@@ -9,8 +9,9 @@
   "main": "dist/main/main.cjs",
   "homepage": "./",
   "scripts": {
-    "dev": "npm run dev:renderer & sleep 3 && npm run dev:main",
-    "dev:renderer": "vite",
+  "dev": "npm run predev:kill-port && npm run dev:renderer & sleep 3 && npm run dev:main",
+  "predev:kill-port": "node -e \"require('node:child_process').exec('lsof -ti :5173 | xargs kill -9', ()=>process.exit(0))\"",
+  "dev:renderer": "vite --port 5173 --strictPort",
     "dev:main": "npm run build:main && NODE_ENV=development npx electron dist/main/main.cjs",
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
@@ -30,23 +31,23 @@
     "sharp": "^0.33.5"
   },
   "devDependencies": {
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
-    "@typescript-eslint/eslint-plugin": "^7.15.0",
-    "@typescript-eslint/parser": "^7.15.0",
+  "@types/react": "^18.3.3",
+  "@types/react-dom": "^18.3.0",
+  "@typescript-eslint/eslint-plugin": "^8.39.0",
+  "@typescript-eslint/parser": "^8.39.0",
     "@vitejs/plugin-react": "^4.3.1",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.24.0",
-    "eslint": "^8.57.0",
+  "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
     "tsx": "^4.19.2",
-    "typescript": "^5.2.2",
+  "typescript": "^5.6.3",
     "vite": "^5.3.4"
   },
   "build": {
-    "appId": "com.joyeria.pventa",
-    "productName": "Joyería PVenta",
+    "appId": "com.vangelico.pos",
+    "productName": "Vangelico",
     "directories": {
       "output": "release"
     },

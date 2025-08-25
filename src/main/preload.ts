@@ -18,11 +18,13 @@ const electronAPI = {
   // Ventas
   getSales: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SALES),
   createSale: (saleData: any) => ipcRenderer.invoke(IPC_CHANNELS.CREATE_SALE, saleData),
+  clearSales: () => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_SALES),
 
   // Sesiones de caja
   getCashSessions: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CASH_SESSIONS),
   createCashSession: (sessionData: any) => ipcRenderer.invoke(IPC_CHANNELS.CREATE_CASH_SESSION, sessionData),
   updateCashSession: (id: number, sessionData: any) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CASH_SESSION, id, sessionData),
+  deleteCashSession: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_CASH_SESSION, id),
 
   // Configuración
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SETTINGS),
@@ -30,7 +32,14 @@ const electronAPI = {
 
   // Logging
   logInfo: (msg: string) => ipcRenderer.invoke(IPC_CHANNELS.LOG_INFO, msg),
-  logWarn: (msg: string) => ipcRenderer.invoke(IPC_CHANNELS.LOG_WARN, msg)
+  logWarn: (msg: string) => ipcRenderer.invoke(IPC_CHANNELS.LOG_WARN, msg),
+
+  // Eventos
+  onSalesChanged: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on(IPC_CHANNELS.SALES_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.SALES_CHANGED, handler);
+  }
 };
 
 // Exponer API al renderer de forma segura

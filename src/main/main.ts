@@ -17,7 +17,9 @@ class JoyeriaApp {
   }
 
   private setupApp() {
-    // Configuración de seguridad
+  // Unificar nombre de app (afecta app.getPath('userData'))
+  try { app.setName('Vangelico'); } catch {}
+  // Configuración de seguridad
     app.whenReady().then(() => {
       this.createWindow();
       this.setupIPC();
@@ -78,7 +80,7 @@ class JoyeriaApp {
 
     // Logging para debugging
     this.mainWindow.webContents.on('did-finish-load', () => {
-      log.info('🚀 Joyería PVenta loaded successfully');
+  log.info('🚀 Vangelico loaded successfully');
     });
   }
 
@@ -86,23 +88,17 @@ class JoyeriaApp {
     if (!this.mainWindow) return;
 
     if (this.isDevelopment) {
-      // En desarrollo, intentar conectar con múltiples puertos
-      const ports = [5173, 5174, 5175, 5176, 5177, 5178, 5179];
-      
-      for (const port of ports) {
-        try {
-          const url = `http://localhost:${port}`;
-          log.info(`🔗 Trying to load URL: ${url}`);
-          await this.mainWindow.loadURL(url);
-          log.info(`✅ Successfully loaded: ${url}`);
-          break;
-        } catch (error) {
-          log.warn(`❌ Failed to load port ${port}, trying next...`);
-          if (port === ports[ports.length - 1]) {
-            log.error('❌ Could not connect to development server');
-            app.quit();
-          }
-        }
+      // En desarrollo, conectarse SOLO a la URL/puerto esperado
+      const devPort = Number(process.env.VITE_DEV_SERVER_PORT || 5173);
+      const url = process.env.VITE_DEV_SERVER_URL || `http://localhost:${devPort}`;
+      try {
+        log.info(`🔗 Trying to load URL: ${url}`);
+        await this.mainWindow.loadURL(url);
+        log.info(`✅ Successfully loaded: ${url}`);
+      } catch (error) {
+        log.error(`❌ Could not connect to development server at ${url}`);
+        log.error(error);
+        app.quit();
       }
     } else {
       // En producción
@@ -114,7 +110,7 @@ class JoyeriaApp {
     if (process.platform === 'darwin') {
       const template = [
         {
-          label: 'Joyería PVenta',
+          label: 'Vangelico',
           submenu: [
             { role: 'about' },
             { type: 'separator' },
@@ -258,6 +254,21 @@ class JoyeriaApp {
       }
     });
 
+    ipcMain.handle(IPC_CHANNELS.CLEAR_SALES, async () => {
+      try {
+        log.info('🗑️ CLEAR_SALES invoked');
+        const result = await databaseService.clearSales();
+        if (result && this.mainWindow) {
+          this.mainWindow.webContents.send(IPC_CHANNELS.SALES_CHANGED);
+        }
+        log.info(`🗑️ CLEAR_SALES completed: ${result}`);
+        return result;
+      } catch (error) {
+        log.error('Error clearing sales:', error);
+        throw error;
+      }
+    });
+
     // Handlers para Sesiones de Caja
     ipcMain.handle(IPC_CHANNELS.GET_CASH_SESSIONS, async () => {
       try {
@@ -282,6 +293,15 @@ class JoyeriaApp {
         return await databaseService.updateCashSession(id, sessionData);
       } catch (error) {
         log.error('Error updating cash session:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.DELETE_CASH_SESSION, async (_evt, id: number) => {
+      try {
+        return await databaseService.deleteCashSession(id);
+      } catch (error) {
+        log.error('Error deleting cash session:', error);
         throw error;
       }
     });
@@ -321,6 +341,7 @@ class JoyeriaApp {
   private async initializeDatabase() {
     try {
       await databaseService.initialize();
+  try { log.info(`📂 userData: ${app.getPath('userData')}`); } catch {}
       log.info('🗄️ Database initialized successfully');
     } catch (error) {
       log.error('❌ Database initialization failed:', error);

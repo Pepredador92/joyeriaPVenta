@@ -1,33 +1,102 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
-// Declarar tipos para la API de Electron
-declare global {
-  interface Window {
-    electronAPI: {
-      getProducts: () => Promise<any[]>;
-      createProduct: (productData: any) => Promise<any>;
-      updateProduct: (id: number, productData: any) => Promise<any>;
-      deleteProduct: (id: number) => Promise<boolean>;
-      getCustomers: () => Promise<any[]>;
-      createCustomer: (customerData: any) => Promise<any>;
-      updateCustomer: (id: number, customerData: any) => Promise<any>;
-      deleteCustomer: (id: number) => Promise<boolean>;
-      getSales: () => Promise<any[]>;
-      createSale: (saleData: any) => Promise<any>;
-      getCashSessions: () => Promise<any[]>;
-      createCashSession: (sessionData: any) => Promise<any>;
-      updateCashSession: (id: number, sessionData: any) => Promise<any>;
-      getSettings: () => Promise<any[]>;
-      updateSetting: (key: string, value: string) => Promise<any>;
-  // Logging helpers (optional)
-  logInfo?: (msg: string) => Promise<void>;
-  logWarn?: (msg: string) => Promise<void>;
-    };
-  }
-}
-
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'customers' | 'cash-session' | 'reports' | 'settings';
+
+// Reusable password gate for protected modules (uses the same dashboard password)
+const AccessGate: React.FC<{ area: 'products' | 'reports' | 'settings'; children: React.ReactNode }> = ({ area, children }) => {
+  const [unlocked, setUnlocked] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(`gate:${area}`) === '1';
+    } catch {}
+    return false;
+  });
+  const [showModal, setShowModal] = useState<boolean>(false);
+  const [password, setPassword] = useState('');
+  const [attempts, setAttempts] = useState(0);
+  const ATTEMPT_LIMIT = 3;
+  const COOLDOWN_MS = 30_000;
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!unlocked) setShowModal(true);
+  }, []);
+
+  const ADMIN_PASSWORD = (typeof localStorage !== 'undefined' && localStorage.getItem('dashboardPassword')) || '080808';
+
+  const secondsLeft = cooldownUntil ? Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000)) : 0;
+
+  const handleSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (password === ADMIN_PASSWORD) {
+      setUnlocked(true);
+      try { sessionStorage.setItem(`gate:${area}`, '1'); } catch {}
+      setShowModal(false);
+      setPassword('');
+      setAttempts(0);
+      window.electronAPI?.logInfo?.(`desbloqueo_exitoso_${area}`);
+    } else {
+      const next = attempts + 1;
+      setAttempts(next);
+      window.electronAPI?.logWarn?.(`desbloqueo_fallido_${area}`);
+      if (next >= ATTEMPT_LIMIT) {
+        const until = Date.now() + COOLDOWN_MS;
+        setCooldownUntil(until);
+        setShowModal(false);
+        setTimeout(() => { setAttempts(0); setCooldownUntil(null); }, COOLDOWN_MS + 50);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!showModal) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowModal(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showModal]);
+
+  if (unlocked) return <>{children}</>;
+
+  return (
+    <div style={{ position:'relative', minHeight:'100%', padding: 20 }}>
+      <div style={{
+        position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center',
+        background:'linear-gradient(180deg, rgba(246,248,252,0.9), rgba(240,242,247,0.92))'
+      }}>
+        <div style={{ background:'#fff', border:'1px solid #e7ebf3', borderRadius:12, padding:20, width:360, boxShadow:'0 10px 30px rgba(16,24,40,0.12)' }}>
+          <h3 style={{ marginTop:0, marginBottom:10 }}>🔒 Módulo protegido</h3>
+          <div style={{ color:'#667085', fontSize:13, marginBottom:12 }}>Ingresa la contraseña para acceder a {area==='products'?'Productos':area==='reports'?'Reportes':'Configuración'}.</div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={() => { if (cooldownUntil && Date.now()<cooldownUntil) return; setPassword(''); setShowModal(true); window.electronAPI?.logInfo?.(`intento_desbloqueo_${area}`); }}
+              style={{ flex:1, padding:'10px 12px', border:'1px solid #2f6fed', background:'#2f6fed', color:'#fff', borderRadius:8, cursor:'pointer', fontWeight:600 }}>Desbloquear</button>
+          </div>
+          {cooldownUntil && Date.now()<cooldownUntil && (
+            <div style={{ marginTop:8, fontSize:12, color:'#d32f2f' }}>Demasiados intentos. Intenta nuevamente en {secondsLeft}s.</div>
+          )}
+        </div>
+      </div>
+
+      {showModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }}>
+          <form onSubmit={handleSubmit} style={{ background:'#fff', padding:18, borderRadius:10, width:360, boxShadow:'0 10px 30px rgba(0,0,0,0.25)' }}>
+            <h3 style={{ marginTop:0, marginBottom:12 }}>🔒 Ingresar contraseña</h3>
+            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Contraseña" autoFocus disabled={!!(cooldownUntil && Date.now()<cooldownUntil)} style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8, marginBottom:10 }} />
+            {attempts>0 && attempts<ATTEMPT_LIMIT && !cooldownUntil && (
+              <div style={{ fontSize:12, color:'#d32f2f', marginBottom:10 }}>Intento fallido. Te quedan {ATTEMPT_LIMIT - attempts} intentos.</div>
+            )}
+            {cooldownUntil && Date.now()<cooldownUntil && (
+              <div style={{ fontSize:12, color:'#d32f2f', marginBottom:10 }}>Demasiados intentos. Intenta nuevamente en {secondsLeft}s.</div>
+            )}
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+              <button type="button" onClick={()=>setShowModal(false)} style={{ background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'8px 12px', cursor:'pointer' }}>Cancelar</button>
+              <button type="submit" disabled={!!(cooldownUntil && Date.now()<cooldownUntil)} style={{ background:'#2f6fed', color:'#fff', border:'none', borderRadius:8, padding:'8px 12px', cursor:'pointer' }}>Desbloquear</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const Dashboard = () => {
   const [stats, setStats] = useState({
@@ -565,10 +634,19 @@ const Sales = () => {
 
   useEffect(() => {
     loadData();
+    // Escuchar cambios de ventas desde el proceso principal (clear, etc.)
+    const off = window.electronAPI?.onSalesChanged?.(async () => {
+      try {
+        await loadData();
+      } catch {}
+    });
+    return () => {
+      if (typeof off === 'function') off();
+    };
     try {
       const dl = localStorage.getItem('discountLevels');
       if (dl) {
-        const parsed = JSON.parse(dl);
+        const parsed = JSON.parse(dl as string);
         setDiscountMap({
           Bronze: (parsed.Bronze ?? 0) / 100,
           Silver: (parsed.Silver ?? 5) / 100,
@@ -580,7 +658,7 @@ const Sales = () => {
     try {
       const bs = localStorage.getItem('businessSettings');
       if (bs) {
-        const parsed = JSON.parse(bs);
+        const parsed = JSON.parse(bs as string);
         if (typeof parsed.taxRate === 'number') setTaxRate((parsed.taxRate || 16) / 100);
       }
     } catch {}
@@ -1213,6 +1291,7 @@ const CashSession = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
   const [detailSession, setDetailSession] = useState<any>(null);
+  const [sessionToDelete, setSessionToDelete] = useState<any>(null);
   const [newSession, setNewSession] = useState({
     initialAmount: 0, finalAmount: 0, notes: ''
   });
@@ -1407,6 +1486,56 @@ const CashSession = () => {
     w.focus();
     w.print();
     w.close();
+  };
+
+  // Password gate for deleting sessions (uses dashboard password)
+  const ADMIN_PASSWORD = (typeof localStorage !== 'undefined' && localStorage.getItem('dashboardPassword')) || '080808';
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePass, setDeletePass] = useState('');
+  const [delAttempts, setDelAttempts] = useState(0);
+  const DEL_ATTEMPT_LIMIT = 3;
+  const DEL_COOLDOWN_MS = 30_000;
+  const [delCooldownUntil, setDelCooldownUntil] = useState<number | null>(null);
+
+  const askDelete = (session:any) => {
+    setSessionToDelete(session);
+    setDeletePass('');
+    setShowDeleteModal(true);
+    window.electronAPI?.logInfo?.('intento_eliminar_sesion_caja');
+  };
+
+  const confirmDelete = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!sessionToDelete) return;
+    if (delCooldownUntil && Date.now() < delCooldownUntil) return;
+    if (deletePass === ADMIN_PASSWORD) {
+      try {
+        const ok = await window.electronAPI.deleteCashSession(sessionToDelete.id);
+        if (ok) {
+          setShowDeleteModal(false);
+          setSessionToDelete(null);
+          setDeletePass('');
+          setDelAttempts(0);
+          await loadCashSessions();
+          window.electronAPI?.logInfo?.('eliminar_sesion_caja_ok');
+        } else {
+          alert('No se pudo eliminar la sesión');
+        }
+      } catch (err) {
+        console.error('Error deleting session:', err);
+        alert('Error al eliminar la sesión');
+      }
+    } else {
+      const next = delAttempts + 1;
+      setDelAttempts(next);
+      window.electronAPI?.logWarn?.('eliminar_sesion_caja_pwd_incorrecta');
+      if (next >= DEL_ATTEMPT_LIMIT) {
+        const until = Date.now() + DEL_COOLDOWN_MS;
+        setDelCooldownUntil(until);
+        setShowDeleteModal(false);
+        setTimeout(() => { setDelAttempts(0); setDelCooldownUntil(null); }, DEL_COOLDOWN_MS + 50);
+      }
+    }
   };
 
   return (
@@ -1649,6 +1778,15 @@ const CashSession = () => {
                       Cerrar
                     </button>
                   )}
+                  {session.status === 'Cerrada' && (
+                    <button
+                      onClick={() => askDelete(session)}
+                      style={{ marginLeft:8, padding:'4px 8px', border:'1px solid #9e9e9e', background:'#fff', color:'#555', borderRadius:4, cursor:'pointer' }}
+                      title="Eliminar sesión"
+                    >
+                      Eliminar
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -1665,6 +1803,9 @@ const CashSession = () => {
               <div style={{ display:'flex', gap:8 }}>
                 <button onClick={()=> exportSessionCSV(detailSession)} style={{ border:'1px solid #1976d2', color:'#1976d2', background:'#fff', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Exportar CSV</button>
                 <button onClick={()=> printSession(detailSession)} style={{ border:'1px solid #4caf50', color:'#4caf50', background:'#fff', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Imprimir</button>
+                {detailSession.status === 'Cerrada' && (
+                  <button onClick={()=> askDelete(detailSession)} style={{ border:'1px solid #9e9e9e', color:'#555', background:'#fff', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Eliminar</button>
+                )}
                 <button onClick={() => setDetailSession(null)} style={{ border:'none', background:'#eee', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Cerrar</button>
               </div>
             </div>
@@ -1710,6 +1851,27 @@ const CashSession = () => {
           </div>
         </div>
       ); })()}
+
+      {/* Modal de contraseña para eliminar sesión */}
+      {showDeleteModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1002 }}>
+          <form onSubmit={confirmDelete} style={{ background:'#fff', padding:18, borderRadius:10, width:360, boxShadow:'0 10px 30px rgba(0,0,0,0.25)' }}>
+            <h3 style={{ marginTop:0, marginBottom:12 }}>🔒 Confirmar eliminación</h3>
+            <div style={{ fontSize:13, color:'#666', marginBottom:8 }}>Ingresa la contraseña para eliminar esta sesión de caja.</div>
+            <input type="password" value={deletePass} onChange={e=>setDeletePass(e.target.value)} placeholder="Contraseña" autoFocus disabled={!!(delCooldownUntil && Date.now()<delCooldownUntil)} style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8, marginBottom:10 }} />
+            {delAttempts>0 && delAttempts<DEL_ATTEMPT_LIMIT && !delCooldownUntil && (
+              <div style={{ fontSize:12, color:'#d32f2f', marginBottom:10 }}>Intento fallido. Te quedan {DEL_ATTEMPT_LIMIT - delAttempts} intentos.</div>
+            )}
+            {delCooldownUntil && Date.now()<delCooldownUntil && (
+              <div style={{ fontSize:12, color:'#d32f2f', marginBottom:10 }}>Demasiados intentos. Intenta nuevamente en {Math.max(0, Math.ceil((delCooldownUntil - Date.now())/1000))}s.</div>
+            )}
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+              <button type="button" onClick={()=> setShowDeleteModal(false)} style={{ background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'8px 12px', cursor:'pointer' }}>Cancelar</button>
+              <button type="submit" disabled={!!(delCooldownUntil && Date.now()<delCooldownUntil)} style={{ background:'#d32f2f', color:'#fff', border:'none', borderRadius:8, padding:'8px 12px', cursor:'pointer' }}>Eliminar</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };
@@ -1730,7 +1892,66 @@ const Reports = () => {
 
   useEffect(() => {
     loadData();
+    loadReportPreferences();
   }, []);
+
+  const loadReportPreferences = async () => {
+    try {
+      // Prefer backend settings
+      if (window.electronAPI?.getSettings) {
+        const rows = await window.electronAPI.getSettings();
+        const map = Object.fromEntries(rows.map((r:any)=> [r.key, r.value]));
+        const start = map['reports_date_start'];
+        const end = map['reports_date_end'];
+        const method = map['reports_payment_filter'] as any;
+        const tab = map['reports_active_tab'];
+        const pQuery = map['reports_product_query'];
+        const cQuery = map['reports_customer_query'];
+        if (start && end) setDateRange({ startDate: start, endDate: end });
+        if (method) setPaymentFilter(method);
+        if (tab) setActiveTab(tab);
+        if (typeof pQuery === 'string') setProductQuery(pQuery);
+        if (typeof cQuery === 'string') setCustomerQuery(cQuery);
+        // Mirror to localStorage
+        try {
+          const current = JSON.parse(localStorage.getItem('reportsSettings')||'{}');
+          localStorage.setItem('reportsSettings', JSON.stringify({
+            ...current,
+            startDate: start ?? current.startDate,
+            endDate: end ?? current.endDate,
+            paymentFilter: method ?? current.paymentFilter,
+            activeTab: tab ?? current.activeTab,
+            productQuery: typeof pQuery==='string'?pQuery:current.productQuery,
+            customerQuery: typeof cQuery==='string'?cQuery:current.customerQuery
+          }));
+        } catch {}
+        return;
+      }
+    } catch {}
+    // Fallback: localStorage
+    try {
+      const rs = localStorage.getItem('reportsSettings');
+      if (rs) {
+        const v = JSON.parse(rs);
+        if (v.startDate && v.endDate) setDateRange({ startDate: v.startDate, endDate: v.endDate });
+        if (v.paymentFilter) setPaymentFilter(v.paymentFilter);
+        if (v.activeTab) setActiveTab(v.activeTab);
+        if (typeof v.productQuery==='string') setProductQuery(v.productQuery);
+        if (typeof v.customerQuery==='string') setCustomerQuery(v.customerQuery);
+      }
+    } catch {}
+  };
+
+  const persistReportsLS = (patch: any) => {
+    try {
+      const cur = JSON.parse(localStorage.getItem('reportsSettings')||'{}');
+      localStorage.setItem('reportsSettings', JSON.stringify({ ...cur, ...patch }));
+    } catch {}
+  };
+
+  const persistReportSetting = (key: string, value: string) => {
+    try { window.electronAPI?.updateSetting?.(key, value); } catch {}
+  };
 
   const loadData = async () => {
     try {
@@ -1778,6 +1999,36 @@ const Reports = () => {
       setDateRange({ startDate: start, endDate: end });
     }
   };
+
+  // Persist on changes
+  useEffect(()=>{
+    if (!dateRange?.startDate || !dateRange?.endDate) return;
+    persistReportsLS({ startDate: dateRange.startDate, endDate: dateRange.endDate });
+    persistReportSetting('reports_date_start', dateRange.startDate);
+    persistReportSetting('reports_date_end', dateRange.endDate);
+  }, [dateRange]);
+
+  useEffect(()=>{
+    persistReportsLS({ paymentFilter });
+    persistReportSetting('reports_payment_filter', String(paymentFilter));
+  }, [paymentFilter]);
+
+  useEffect(()=>{
+    persistReportsLS({ activeTab });
+    persistReportSetting('reports_active_tab', activeTab);
+  }, [activeTab]);
+
+  // Debounced persist for queries
+  useEffect(()=>{
+    persistReportsLS({ productQuery });
+    const t = setTimeout(()=> persistReportSetting('reports_product_query', productQuery), 300);
+    return ()=> clearTimeout(t);
+  }, [productQuery]);
+  useEffect(()=>{
+    persistReportsLS({ customerQuery });
+    const t = setTimeout(()=> persistReportSetting('reports_customer_query', customerQuery), 300);
+    return ()=> clearTimeout(t);
+  }, [customerQuery]);
 
   const exportSalesCSV = () => {
     const header = ['Fecha','ID Venta','ClienteID','Método','Subtotal','Descuento','Impuesto','Total'];
@@ -2426,6 +2677,39 @@ const Reports = () => {
           </select>
           <button onClick={exportSalesCSV} style={{ padding:'8px 12px', border:'1px solid #1976d2', background:'#fff', color:'#1976d2', borderRadius:8, cursor:'pointer' }}>Exportar Ventas</button>
           <button onClick={printReport} style={{ padding:'8px 12px', border:'1px solid #4caf50', background:'#fff', color:'#4caf50', borderRadius:8, cursor:'pointer' }}>Imprimir</button>
+          <button
+            onClick={async()=>{
+              const admin = (localStorage.getItem('dashboardPassword')||'080808');
+              const pwd = prompt('Para limpiar TODAS las ventas, ingresa la contraseña de administrador:');
+              if (!pwd) return; // cancelado
+              if (pwd !== admin) { alert('Contraseña incorrecta'); return; }
+              if (!confirm('¿Seguro que deseas borrar TODAS las ventas? Esta acción no se puede deshacer.')) return;
+              try {
+                await window.electronAPI?.logInfo?.('clear_sales_requested');
+                const ok = await window.electronAPI?.clearSales?.();
+                await window.electronAPI?.logInfo?.(`clear_sales_result:${ok}`);
+                if (!ok) {
+                  alert('No se pudieron eliminar las ventas');
+                  return;
+                }
+              } catch (e) {
+                console.error('Error en clearSales:', e);
+                alert('No se pudieron eliminar las ventas');
+                return;
+              }
+              try {
+                await loadData();
+              } catch (e) {
+                console.error('Ventas eliminadas, pero falló recargar datos:', e);
+                await window.electronAPI?.logWarn?.('reload_after_clear_failed');
+                alert('Ventas eliminadas, pero falló recargar los datos');
+                return;
+              }
+              alert('Ventas eliminadas');
+            }}
+            style={{ padding:'8px 12px', border:'1px solid #d32f2f', background:'#fff', color:'#d32f2f', borderRadius:8, cursor:'pointer' }}
+            title="Borra todas las ventas (requiere contraseña)"
+          >🗑️ Limpiar Ventas</button>
         </div>
       </div>
 
@@ -2474,7 +2758,7 @@ const Settings = () => {
     Platinum: 12
   });
   const [businessSettings, setBusinessSettings] = useState({
-    businessName: 'Joyería Elegante',
+    businessName: 'Vangelico',
     address: '',
     phone: '',
     email: '',
@@ -2490,7 +2774,8 @@ const Settings = () => {
     allowNegativeStock: false,
     requireCustomerForSale: false,
     printReceiptAutomatically: true,
-    defaultPaymentMethod: 'Efectivo'
+  defaultPaymentMethod: 'Efectivo',
+  nightMode: false
   });
 
   // Nueva configuración para clasificación automática de clientes
@@ -2534,6 +2819,19 @@ const Settings = () => {
 
   const saveClientClassificationSettings = () => {
     localStorage.setItem('clientClassificationSettings', JSON.stringify(clientClassificationSettings));
+    try {
+      window.electronAPI?.updateSetting?.('client_class_method', clientClassificationSettings.classificationMethod);
+      window.electronAPI?.updateSetting?.('client_b2s_amount', String(clientClassificationSettings.bronzeToSilver.amount));
+      window.electronAPI?.updateSetting?.('client_b2s_freq', String(clientClassificationSettings.bronzeToSilver.frequency));
+      window.electronAPI?.updateSetting?.('client_s2g_amount', String(clientClassificationSettings.silverToGold.amount));
+      window.electronAPI?.updateSetting?.('client_s2g_freq', String(clientClassificationSettings.silverToGold.frequency));
+      window.electronAPI?.updateSetting?.('client_g2p_amount', String(clientClassificationSettings.goldToPlatinum.amount));
+      window.electronAPI?.updateSetting?.('client_g2p_freq', String(clientClassificationSettings.goldToPlatinum.frequency));
+      window.electronAPI?.updateSetting?.('client_eval_period_months', String(clientClassificationSettings.evaluationPeriod));
+      window.electronAPI?.updateSetting?.('client_auto_upgrade', String(!!clientClassificationSettings.autoUpgrade));
+      window.electronAPI?.updateSetting?.('client_auto_downgrade', String(!!clientClassificationSettings.autoDowngrade));
+      window.electronAPI?.updateSetting?.('client_notify_level_change', String(!!clientClassificationSettings.notifyLevelChange));
+    } catch {}
     alert('Configuración de clasificación de clientes actualizada correctamente');
   };
 
@@ -2549,13 +2847,35 @@ const Settings = () => {
         data.forEach((setting: any) => {
           if (setting.key === 'business_name') {
             setBusinessSettings(prev => ({ ...prev, businessName: setting.value }));
+            try { localStorage.setItem('businessSettings', JSON.stringify({ ...JSON.parse(localStorage.getItem('businessSettings')||'{}'), businessName: setting.value })); } catch {}
           }
           if (setting.key === 'tax_rate') {
             setBusinessSettings(prev => ({ ...prev, taxRate: parseFloat(setting.value) * 100 }));
+            try {
+              const v = parseFloat(setting.value);
+              if (!Number.isNaN(v)) localStorage.setItem('businessSettings', JSON.stringify({ ...JSON.parse(localStorage.getItem('businessSettings')||'{}'), taxRate: v * 100 }));
+            } catch {}
           }
           if (setting.key === 'monthly_goal') {
             const mg = parseFloat(setting.value);
             if (!Number.isNaN(mg)) setGoals(prev => ({ ...prev, monthlyGoal: mg }));
+          }
+          if (setting.key === 'night_mode') {
+            const nm = setting.value === 'true';
+            setSystemSettings(prev => ({ ...prev, nightMode: nm }));
+            try { localStorage.setItem('systemSettings', JSON.stringify({ ...JSON.parse(localStorage.getItem('systemSettings')||'{}'), nightMode: nm })); } catch {}
+          }
+          if (setting.key === 'dashboard_password') {
+            try { const sec = JSON.parse(localStorage.getItem('securitySettings')||'{}'); localStorage.setItem('securitySettings', JSON.stringify({ ...sec, dashboardPassword: setting.value })); localStorage.setItem('dashboardPassword', setting.value); } catch {}
+          }
+          if (setting.key === 'mask_amounts_by_default') {
+            try { const sec = JSON.parse(localStorage.getItem('securitySettings')||'{}'); localStorage.setItem('securitySettings', JSON.stringify({ ...sec, maskAmountsByDefault: setting.value === 'true' })); } catch {}
+          }
+          if (setting.key === 'discount_levels') {
+            try { const parsed = JSON.parse(setting.value); if (parsed && typeof parsed === 'object') { setDiscountLevels(parsed); localStorage.setItem('discountLevels', JSON.stringify(parsed)); } } catch {}
+          }
+          if (setting.key === 'cash_denominations') {
+            try { const parsed = JSON.parse(setting.value); if (Array.isArray(parsed)) { setCashDenominations(parsed); localStorage.setItem('cashDenominations', JSON.stringify(parsed)); } } catch {}
           }
         });
       }
@@ -2610,6 +2930,9 @@ const Settings = () => {
 
   const saveDiscountLevels = () => {
     localStorage.setItem('discountLevels', JSON.stringify(discountLevels));
+    try {
+      window.electronAPI?.updateSetting?.('discount_levels', JSON.stringify(discountLevels));
+    } catch {}
     alert('Niveles de descuento actualizados correctamente');
   };
 
@@ -2626,6 +2949,15 @@ const Settings = () => {
 
   const saveSystemSettings = () => {
     localStorage.setItem('systemSettings', JSON.stringify(systemSettings));
+    try {
+      window.electronAPI?.updateSetting?.('night_mode', String(!!systemSettings.nightMode));
+      window.electronAPI?.updateSetting?.('default_payment_method', systemSettings.defaultPaymentMethod);
+      window.electronAPI?.updateSetting?.('require_customer', String(!!systemSettings.requireCustomerForSale));
+      window.electronAPI?.updateSetting?.('auto_backup', String(!!systemSettings.autoBackup));
+      window.electronAPI?.updateSetting?.('backup_interval_hours', String(systemSettings.backupInterval));
+      window.electronAPI?.updateSetting?.('low_stock_alert', String(systemSettings.lowStockAlert));
+      window.electronAPI?.updateSetting?.('print_receipt_auto', String(!!systemSettings.printReceiptAutomatically));
+    } catch {}
     alert('Configuración del sistema actualizada correctamente');
   };
 
@@ -2644,6 +2976,10 @@ const Settings = () => {
   const saveSecurity = () => {
     localStorage.setItem('securitySettings', JSON.stringify(security));
     if (security.dashboardPassword) localStorage.setItem('dashboardPassword', security.dashboardPassword);
+    try {
+      if (security.dashboardPassword) window.electronAPI?.updateSetting?.('dashboard_password', security.dashboardPassword);
+      window.electronAPI?.updateSetting?.('mask_amounts_by_default', String(!!security.maskAmountsByDefault));
+    } catch {}
     alert('Seguridad actualizada');
   };
 
@@ -2653,6 +2989,7 @@ const Settings = () => {
       .sort((a,b)=> b-a);
     setCashDenominations(cleaned);
     localStorage.setItem('cashDenominations', JSON.stringify(cleaned));
+  try { window.electronAPI?.updateSetting?.('cash_denominations', JSON.stringify(cleaned)); } catch {}
     alert('Denominaciones de efectivo guardadas');
   };
 
@@ -2835,6 +3172,10 @@ const Settings = () => {
                 onChange={(e) => setBusinessSettings(prev => ({ ...prev, currency: e.target.value }))}
                 style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '4px' }}
               >
+                <label style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <input type="checkbox" checked={systemSettings.nightMode} onChange={e=> setSystemSettings(prev=> ({ ...prev, nightMode: e.target.checked }))} />
+                  Activar modo nocturno (Vangelico)
+                </label>
                 <option value="MXN">Peso Mexicano (MXN)</option>
                 <option value="USD">Dólar Americano (USD)</option>
                 <option value="EUR">Euro (EUR)</option>
@@ -4610,8 +4951,23 @@ const CustomerDetailsModal: React.FC<{ customer:any, onClose:()=>void, stats:any
 
 function App() {
   const [currentView, setCurrentView] = useState<CurrentView>('dashboard');
+  const [nightMode, setNightMode] = useState<boolean>(() => {
+    try { const s = localStorage.getItem('systemSettings'); if (s) return !!JSON.parse(s).nightMode; } catch {}
+    return false;
+  });
 
-  console.log('🚀 Joyería PVenta - App component rendering...', { currentView });
+  // Sync with changes done in Settings via storage events
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'systemSettings' && e.newValue) {
+        try { const v = JSON.parse(e.newValue); setNightMode(!!v.nightMode); } catch {}
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  console.log('🚀 Vangelico - App component rendering...', { currentView, nightMode });
 
   const renderCurrentView = () => {
     switch (currentView) {
@@ -4620,15 +4976,27 @@ function App() {
       case 'sales':
         return <Sales />;
       case 'products':
-        return <Products />;
+        return (
+          <AccessGate area="products">
+            <Products />
+          </AccessGate>
+        );
       case 'customers':
         return <Customers />;
       case 'cash-session':
         return <CashSession />;
       case 'reports':
-        return <Reports />;
+        return (
+          <AccessGate area="reports">
+            <Reports />
+          </AccessGate>
+        );
       case 'settings':
-        return <Settings />;
+        return (
+          <AccessGate area="settings">
+            <Settings />
+          </AccessGate>
+        );
       default:
         return <Dashboard />;
     }
@@ -4645,10 +5013,10 @@ function App() {
   ];
 
   return (
-    <div className="app-shell jewelry-theme" style={{ display:'flex', height:'100vh', width:'100vw', overflow:'hidden' }}>
+    <div className={`app-shell jewelry-theme ${nightMode ? 'night' : ''}`} style={{ display:'flex', height:'100vh', width:'100vw', overflow:'hidden' }}>
       <div className="luxury-sidebar" style={{ width:'clamp(240px,18vw,300px)', display:'flex', flexDirection:'column', flexShrink:0 }}>
         <div style={{ padding:'32px 30px 28px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
-          <h2 className="sidebar-brand" style={{ margin:0, fontSize:'28px', fontWeight:600 }}>Joyería PVenta</h2>
+          <h2 className="sidebar-brand" style={{ margin:0, fontSize:'28px', fontWeight:600 }}>Vangelico</h2>
           <div style={{ marginTop:'10px', fontSize:'13px', letterSpacing:'.5px', color:'#c5ced8' }}>Sistema POS Profesional</div>
         </div>
         <nav style={{ flex:1, padding:'22px 0 28px' }}>
@@ -4669,7 +5037,7 @@ function App() {
         </nav>
         <div style={{ padding:'22px 32px 30px', fontSize:'12px', letterSpacing:'.5px', color:'#9aa4b1', borderTop:'1px solid rgba(255,255,255,0.05)' }}>
           <div>Versión 1.0.0</div>
-          <div style={{ marginTop:'4px' }}>© 2025 Joyería PVenta</div>
+          <div style={{ marginTop:'4px' }}>© 2025 Vangelico</div>
         </div>
       </div>
       <div className="main-content luxury-main" style={{ flex:1, overflow:'auto', minWidth:0, display:'flex', flexDirection:'column' }}>

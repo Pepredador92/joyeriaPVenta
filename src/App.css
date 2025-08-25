@@ -37,6 +37,17 @@ body {
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
+/* Night mode tokens */
+.app-shell.jewelry-theme.night {
+  --text-main: #e8edf4;
+  --text-soft: #a9b4c2;
+  --bg-main: #0f1217;
+  --bg-panel: #151922;
+  --bg-sidebar: #0c0f14;
+  --border: #1f2630;
+  --accent: #1b2230;
+}
+
 
 body.jewelry-theme, .app-shell.jewelry-theme {
   font-family: var(--font-sans);
@@ -178,6 +189,9 @@ table.lux-table tbody tr td:last-child { border-right:1px solid rgba(255,255,255
 .lux-form-section { background: var(--bg-panel); padding:22px 24px 26px; border-radius: var(--radius-l); border:1px solid var(--border); box-shadow:0 1px 4px 0 rgba(180,180,200,0.07); }
 .lux-form-section h3 { font-family:var(--font-display); letter-spacing:.6px; font-size:20px; margin-top:0; }
 .lux-input, .lux-select, .lux-textarea { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#e6ecf2; padding:10px 14px; border-radius:12px; font-size:14px; width:100%; transition:var(--transition); }
+.app-shell.jewelry-theme:not(.night) .lux-input,
+.app-shell.jewelry-theme:not(.night) .lux-select,
+.app-shell.jewelry-theme:not(.night) .lux-textarea { background:#fff; border:1px solid var(--border); color: var(--text-main); }
 .lux-input:focus, .lux-select:focus, .lux-textarea:focus { border-color:var(--gold); box-shadow:0 0 0 3px rgba(212,175,55,0.25); }
 
 /* Utility */
@@ -186,9 +200,13 @@ table.lux-table tbody tr td:last-child { border-right:1px solid rgba(255,255,255
 .gradient-title { font-family:var(--font-display); color: var(--gold); background:none; letter-spacing:1px; }
 
 /* Scrollbar dark adapt */
-.jewelry-theme ::-webkit-scrollbar-track { background: #f0f0f0; }
-.jewelry-theme ::-webkit-scrollbar-thumb { background: var(--silver); border-radius:4px; border:1px solid var(--border); }
-.jewelry-theme ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.app-shell.jewelry-theme:not(.night) ::-webkit-scrollbar-track { background: #f0f0f0; }
+.app-shell.jewelry-theme:not(.night) ::-webkit-scrollbar-thumb { background: var(--silver); border-radius:4px; border:1px solid var(--border); }
+.app-shell.jewelry-theme:not(.night) ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+.app-shell.jewelry-theme.night ::-webkit-scrollbar-track { background: #0e141b; }
+.app-shell.jewelry-theme.night ::-webkit-scrollbar-thumb { background: #2a3340; border-radius:4px; border:1px solid var(--border); }
+.app-shell.jewelry-theme.night ::-webkit-scrollbar-thumb:hover { background: #3a4656; }
 
 
 #root {
@@ -197,37 +215,21 @@ table.lux-table tbody tr td:last-child { border-right:1px solid rgba(255,255,255
 
 /* Mejora de títulos y texto */
 h1, h2, h3, h4, h5, h6 {
-  color: #2c3e50;
+  color: var(--text-main);
   margin: 0 0 1rem 0;
   font-weight: 600;
 }
 
-h1 {
-  font-size: 2rem;
-  color: #1a202c;
-  padding-bottom: 0.25rem;
-  margin-bottom: 1.25rem;
-}
+h1 { font-size: 2rem; color: var(--text-main); padding-bottom: 0.25rem; margin-bottom: 1.25rem; }
 
-h2 {
-  font-size: 1.5rem;
-  color: #2d3748;
-}
+h2 { font-size: 1.5rem; color: var(--text-main); }
 
-h3 {
-  font-size: 1.25rem;
-  color: #4a5568;
-}
+h3 { font-size: 1.25rem; color: var(--text-soft); }
 
 /* Mejora de contraste para texto */
-p, span, div {
-  color: #4a5568;
-}
+p, span, div { color: var(--text-soft); }
 
-label {
-  color: #2d3748;
-  font-weight: 500;
-}
+label { color: var(--text-main); font-weight: 500; }
 
 button:hover {
   filter: brightness(1.1);
@@ -271,9 +273,7 @@ table {
   font-size: 14px;
 }
 
-tbody tr:hover {
-  background-color: #f9f9f9;
-}
+tbody tr:hover { background-color: rgba(255,255,255,0.04); }
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
