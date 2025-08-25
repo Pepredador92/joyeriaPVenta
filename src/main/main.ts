@@ -38,13 +38,7 @@ class JoyeriaApp {
 
     // Configuración de seguridad
     app.on('web-contents-created', (_, contents) => {
-      contents.on('new-window', (navigationEvent) => {
-        navigationEvent.preventDefault();
-      });
-
-      contents.setWindowOpenHandler(() => {
-        return { action: 'deny' };
-      });
+      contents.setWindowOpenHandler(() => ({ action: 'deny' }));
     });
   }
 
@@ -57,7 +51,6 @@ class JoyeriaApp {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        enableRemoteModule: false,
         preload: path.join(__dirname, 'preload.cjs'),
         webSecurity: true
       },

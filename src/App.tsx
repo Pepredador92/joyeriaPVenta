@@ -2505,6 +2505,11 @@ const Settings = () => {
     notifyLevelChange: true
   });
 
+  // Objetivos de venta (meta mensual)
+  const [goals, setGoals] = useState({
+    monthlyGoal: 100000
+  });
+
   useEffect(() => {
     loadSettings();
     loadBusinessSettings();
@@ -2547,6 +2552,10 @@ const Settings = () => {
           }
           if (setting.key === 'tax_rate') {
             setBusinessSettings(prev => ({ ...prev, taxRate: parseFloat(setting.value) * 100 }));
+          }
+          if (setting.key === 'monthly_goal') {
+            const mg = parseFloat(setting.value);
+            if (!Number.isNaN(mg)) setGoals(prev => ({ ...prev, monthlyGoal: mg }));
           }
         });
       }
@@ -2618,6 +2627,18 @@ const Settings = () => {
   const saveSystemSettings = () => {
     localStorage.setItem('systemSettings', JSON.stringify(systemSettings));
     alert('Configuración del sistema actualizada correctamente');
+  };
+
+  const saveGoals = async () => {
+    try {
+      // Persistir en backend (si aplica) y also en localStorage como respaldo
+      await window.electronAPI?.updateSetting?.('monthly_goal', String(goals.monthlyGoal));
+      localStorage.setItem('goals', JSON.stringify(goals));
+      alert('Meta mensual actualizada correctamente');
+    } catch (e) {
+      console.error('Error updating monthly_goal', e);
+      alert('No se pudo actualizar la meta mensual');
+    }
   };
 
   const saveSecurity = () => {
@@ -2967,6 +2988,36 @@ const Settings = () => {
           >
             💾 Guardar Configuración del Sistema
           </button>
+        </div>
+
+        {/* Objetivos de Venta */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e0e0e0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+          <h3 style={{ 
+            marginTop: 0, 
+            color: '#ff5722', 
+            borderBottom: '3px solid #ffe0b2', 
+            paddingBottom: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            🎯 Objetivos de Venta
+          </h3>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))', gap:16 }}>
+            <div>
+              <label style={{ display:'block', marginBottom:6, fontWeight:'bold' }}>Meta mensual (importe)</label>
+              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                <span style={{ fontWeight:700 }}>$</span>
+                <input type="number" min={0} step={100} value={goals.monthlyGoal}
+                  onChange={e=> setGoals(prev=> ({ ...prev, monthlyGoal: Math.max(0, parseFloat(e.target.value)||0) }))}
+                  style={{ flex:1, padding:'10px', border:'1px solid #ddd', borderRadius:6 }} />
+              </div>
+              <small style={{ color:'#666' }}>Se usa para el indicador de progreso en el Dashboard</small>
+            </div>
+          </div>
+          <div style={{ marginTop:12 }}>
+            <button onClick={saveGoals} style={{ background:'#ff5722', color:'#fff', border:'none', padding:'10px 16px', borderRadius:6, cursor:'pointer', fontWeight:700 }}>💾 Guardar meta</button>
+          </div>
         </div>
 
         {/* Preferencias de Corte de Caja */}
@@ -3407,6 +3458,7 @@ const Settings = () => {
                   discountLevels,
                   businessSettings,
                   systemSettings,
+                  goals,
                   security,
                   clientClassificationSettings,
                   cashDenominations
@@ -3456,6 +3508,11 @@ const Settings = () => {
                     if (data.businessSettings) { setBusinessSettings(data.businessSettings); localStorage.setItem('businessSettings', JSON.stringify(data.businessSettings)); }
                     if (data.systemSettings) { setSystemSettings(data.systemSettings); localStorage.setItem('systemSettings', JSON.stringify(data.systemSettings)); }
                     if (data.security) { setSecurity(data.security); localStorage.setItem('securitySettings', JSON.stringify(data.security)); if (data.security.dashboardPassword) localStorage.setItem('dashboardPassword', data.security.dashboardPassword); }
+                    if (data.goals) {
+                      setGoals(data.goals);
+                      localStorage.setItem('goals', JSON.stringify(data.goals));
+                      try { await window.electronAPI?.updateSetting?.('monthly_goal', String(data.goals.monthlyGoal)); } catch {}
+                    }
                     if (data.clientClassificationSettings) { setClientClassificationSettings(data.clientClassificationSettings); localStorage.setItem('clientClassificationSettings', JSON.stringify(data.clientClassificationSettings)); }
                     if (data.cashDenominations) { setCashDenominations(data.cashDenominations); localStorage.setItem('cashDenominations', JSON.stringify(data.cashDenominations)); }
                     alert('Configuraciones importadas');
