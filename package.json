@@ -19,7 +19,8 @@
   "test:ventas": "tsx scripts/test-ventas.ts",
     "build:mac": "npm run build && npx electron-builder --mac",
     "build:win": "npm run build && npx electron-builder --win",
-    "build:all": "npm run build && npx electron-builder --mac --win",
+  "build:linux": "npm run build && npx electron-builder --linux AppImage deb",
+  "build:all": "npm run build && npx electron-builder --mac --win --linux",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -55,6 +56,19 @@
       "dist/**/*",
       "node_modules/**/*"
     ],
+    "asarUnpack": [
+      "**/node_modules/sharp/**",
+      "**/node_modules/better-sqlite3/**"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "icon": "assets/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
     "mac": {
       "category": "public.app-category.business",
       "target": "dmg"

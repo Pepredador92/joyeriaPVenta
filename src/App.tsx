@@ -627,6 +627,7 @@ const Sales = () => {
   });
 
   const [searchTerm, setSearchTerm] = useState('');
+  // ...
 
   // Configuración de descuentos/IVA (sin dependencias nuevas)
   const [discountMap, setDiscountMap] = useState<{[k:string]: number}>({ Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 });
@@ -731,7 +732,7 @@ const Sales = () => {
   // Edición de líneas
   const removeItem = (id:number) => setOrderItems(prev => prev.filter(i => i.id !== id));
   const updateQty = (id:number, qty:number) => setOrderItems(prev => prev.map(i => i.id===id ? { ...i, quantity: Math.max(1, Math.floor(qty)||1) } : i));
-  const updatePriceManual = (id:number, price:number) => setOrderItems(prev => prev.map(i => i.id===id ? { ...i, unitPrice: Math.max(0, Number(price)||0) } : i));
+  const updatePriceManual = (id:number, price:number) => setOrderItems(prev => prev.map(i => i.id===id ? { ...i, unitPrice: Math.min(999999, Math.max(0, Number(price)||0)) } : i));
 
   // Cliente filtrado
   const filteredCustomers = customers.filter((c:any) => {
@@ -912,12 +913,15 @@ const Sales = () => {
                     <button onClick={()=>updateQty(it.id, it.quantity-1)} style={{ width:24, height:24, border:'1px solid #ddd', background:'#fff', cursor:'pointer' }}>-</button>
                     <span style={{ minWidth:20, textAlign:'center' }}>{it.quantity}</span>
                     <button onClick={()=>updateQty(it.id, it.quantity+1)} style={{ width:24, height:24, border:'1px solid #ddd', background:'#fff', cursor:'pointer' }}>+</button>
-                    {it.type==='manual' ? (
-                      <input type="number" min={0} step="0.01" value={it.unitPrice} onChange={e=>updatePriceManual(it.id, parseFloat(e.target.value)||0)}
-                        style={{ marginLeft:8, width:100, padding:'4px 6px', border:'1px solid #ddd', borderRadius:6 }} />
-                    ) : (
-                      <span style={{ marginLeft:8, fontSize:12, color:'#666' }}>${it.unitPrice.toFixed(2)} c/u</span>
-                    )}
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={it.unitPrice}
+                      onChange={e=>updatePriceManual(it.id, parseFloat(e.target.value)||0)}
+                      style={{ marginLeft:8, width:110, padding:'4px 6px', border:'1px solid #ddd', borderRadius:6 }}
+                    />
+                    <span style={{ fontSize:12, color:'#666' }}> c/u</span>
                   </div>
                 </div>
                 <div style={{ textAlign:'right' }}>
@@ -1882,6 +1886,13 @@ const Reports = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('general');
+  // Estado para modales (reemplazo de prompt/confirm)
+  const [clearPwdOpen, setClearPwdOpen] = useState(false);
+  const [clearPwd, setClearPwd] = useState('');
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [modalError, setModalError] = useState<string>('');
+  const [toast, setToast] = useState<string|null>(null);
+  const showToast = (msg: string) => { setToast(msg); setTimeout(()=> setToast(null), 2500); };
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -2678,35 +2689,7 @@ const Reports = () => {
           <button onClick={exportSalesCSV} style={{ padding:'8px 12px', border:'1px solid #1976d2', background:'#fff', color:'#1976d2', borderRadius:8, cursor:'pointer' }}>Exportar Ventas</button>
           <button onClick={printReport} style={{ padding:'8px 12px', border:'1px solid #4caf50', background:'#fff', color:'#4caf50', borderRadius:8, cursor:'pointer' }}>Imprimir</button>
           <button
-            onClick={async()=>{
-              const admin = (localStorage.getItem('dashboardPassword')||'080808');
-              const pwd = prompt('Para limpiar TODAS las ventas, ingresa la contraseña de administrador:');
-              if (!pwd) return; // cancelado
-              if (pwd !== admin) { alert('Contraseña incorrecta'); return; }
-              if (!confirm('¿Seguro que deseas borrar TODAS las ventas? Esta acción no se puede deshacer.')) return;
-              try {
-                await window.electronAPI?.logInfo?.('clear_sales_requested');
-                const ok = await window.electronAPI?.clearSales?.();
-                await window.electronAPI?.logInfo?.(`clear_sales_result:${ok}`);
-                if (!ok) {
-                  alert('No se pudieron eliminar las ventas');
-                  return;
-                }
-              } catch (e) {
-                console.error('Error en clearSales:', e);
-                alert('No se pudieron eliminar las ventas');
-                return;
-              }
-              try {
-                await loadData();
-              } catch (e) {
-                console.error('Ventas eliminadas, pero falló recargar datos:', e);
-                await window.electronAPI?.logWarn?.('reload_after_clear_failed');
-                alert('Ventas eliminadas, pero falló recargar los datos');
-                return;
-              }
-              alert('Ventas eliminadas');
-            }}
+            onClick={()=>{ setModalError(''); setClearPwd(''); setClearPwdOpen(true); }}
             style={{ padding:'8px 12px', border:'1px solid #d32f2f', background:'#fff', color:'#d32f2f', borderRadius:8, cursor:'pointer' }}
             title="Borra todas las ventas (requiere contraseña)"
           >🗑️ Limpiar Ventas</button>
@@ -2736,6 +2719,63 @@ const Reports = () => {
         {activeTab === 'demographics' && renderDemographicsTab()}
         {activeTab === 'categories' && renderCategoriesTab()}
       </div>
+
+      {/* Toast notificación */}
+      {toast && (
+        <div style={{ position:'fixed', top:16, right:16, background:'#323232', color:'#fff', padding:'10px 14px', borderRadius:8, boxShadow:'0 4px 12px rgba(0,0,0,0.2)', zIndex:1000 }}>{toast}</div>
+      )}
+
+      {/* Modal: pedir contraseña */}
+      {clearPwdOpen && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.35)', display:'grid', placeItems:'center', zIndex:1000 }}>
+          <div style={{ background:'#fff', borderRadius:12, padding:20, width:320, boxShadow:'0 10px 28px rgba(0,0,0,0.25)', border:'1px solid #eee' }}>
+            <h3 style={{ margin:'0 0 10px' }}>Confirmar acción</h3>
+            <p style={{ margin:'0 0 10px', color:'#555', fontSize:14 }}>Ingresa la contraseña de administrador para borrar todas las ventas.</p>
+            <input autoFocus type="password" value={clearPwd} onChange={e=>setClearPwd(e.target.value)} placeholder="Contraseña" style={{ width:'100%', padding:'8px 10px', border:'1px solid #ddd', borderRadius:8 }} />
+            {modalError && <div style={{ color:'#d32f2f', fontSize:12, marginTop:6 }}>{modalError}</div>}
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:14 }}>
+              <button onClick={()=> setClearPwdOpen(false)} style={{ padding:'8px 12px', border:'1px solid #ccc', background:'#fff', borderRadius:8, cursor:'pointer' }}>Cancelar</button>
+              <button onClick={()=>{
+                const admin = (localStorage.getItem('dashboardPassword')||'080808');
+                if (!clearPwd) { setModalError('Ingresa la contraseña'); return; }
+                if (clearPwd !== admin) { setModalError('Contraseña incorrecta'); return; }
+                setModalError('');
+                setClearPwdOpen(false);
+                setClearConfirmOpen(true);
+              }} style={{ padding:'8px 12px', border:'1px solid #1976d2', background:'#1976d2', color:'#fff', borderRadius:8, cursor:'pointer' }}>Continuar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: confirmación final */}
+      {clearConfirmOpen && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.35)', display:'grid', placeItems:'center', zIndex:1000 }}>
+          <div style={{ background:'#fff', borderRadius:12, padding:20, width:360, boxShadow:'0 10px 28px rgba(0,0,0,0.25)', border:'1px solid #eee' }}>
+            <h3 style={{ margin:'0 0 10px' }}>Borrar todas las ventas</h3>
+            <p style={{ margin:'0 0 10px', color:'#555', fontSize:14 }}>¿Seguro que deseas borrar TODAS las ventas? Esta acción no se puede deshacer.</p>
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:14 }}>
+              <button onClick={()=> setClearConfirmOpen(false)} style={{ padding:'8px 12px', border:'1px solid #ccc', background:'#fff', borderRadius:8, cursor:'pointer' }}>Cancelar</button>
+              <button onClick={async ()=>{
+                try {
+                  await window.electronAPI?.logInfo?.('clear_sales_requested');
+                  const ok = await window.electronAPI?.clearSales?.();
+                  await window.electronAPI?.logInfo?.(`clear_sales_result:${ok}`);
+                  if (!ok) { setClearConfirmOpen(false); return void (showToast('No se pudieron eliminar las ventas')); }
+                } catch (e) {
+                  console.error('Error en clearSales:', e);
+                  setClearConfirmOpen(false);
+                  showToast('No se pudieron eliminar las ventas');
+                  return;
+                }
+                try { await loadData(); } catch { await window.electronAPI?.logWarn?.('reload_after_clear_failed'); }
+                setClearConfirmOpen(false);
+                showToast('Ventas eliminadas');
+              }} style={{ padding:'8px 12px', border:'1px solid #d32f2f', background:'#d32f2f', color:'#fff', borderRadius:8, cursor:'pointer' }}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
