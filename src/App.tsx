@@ -38,8 +38,17 @@ const Dashboard = () => {
   });
 
   // Privacy/masking state
-  const ADMIN_DASHBOARD_PASSWORD = '080808';
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  const ADMIN_DASHBOARD_PASSWORD = (typeof localStorage !== 'undefined' && localStorage.getItem('dashboardPassword')) || '080808';
+  const [isUnlocked, setIsUnlocked] = useState(() => {
+    try {
+      const s = localStorage.getItem('securitySettings');
+      if (s) {
+        const parsed = JSON.parse(s);
+        return !parsed.maskAmountsByDefault;
+      }
+    } catch {}
+    return false;
+  });
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [attempts, setAttempts] = useState(0);
@@ -529,7 +538,16 @@ const Sales = () => {
   const [customerQuery, setCustomerQuery] = useState('');
 
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'Efectivo'|'Tarjeta'|'Transferencia'>('Efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<'Efectivo'|'Tarjeta'|'Transferencia'>(() => {
+    try {
+      const sys = localStorage.getItem('systemSettings');
+      if (sys) {
+        const parsed = JSON.parse(sys);
+        if (parsed.defaultPaymentMethod) return parsed.defaultPaymentMethod;
+      }
+    } catch {}
+    return 'Efectivo';
+  });
 
   const [quickSale, setQuickSale] = useState({
     fecha: new Date().toISOString().split('T')[0],
@@ -659,6 +677,17 @@ const Sales = () => {
 
   const confirmOrder = async () => {
     if (orderItems.length === 0) return;
+    // Validación: requerir cliente si está activo en configuración
+    try {
+      const sys = localStorage.getItem('systemSettings');
+      if (sys) {
+        const parsed = JSON.parse(sys);
+        if (parsed.requireCustomerForSale && !selectedCustomer) {
+          alert('Debes seleccionar un cliente para confirmar la venta');
+          return;
+        }
+      }
+    } catch {}
     try {
       const items = orderItems.map(i => ({
         productId: i.type==='product' ? (i.productId||0) : 0,
@@ -1297,24 +1326,135 @@ const CashSession = () => {
     return status === 'Abierta' ? '#4caf50' : '#2196f3';
   };
 
+  // Mejoras: utilidades y estados derivados
+  const [dateFilter, setDateFilter] = useState({
+    startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0]
+  });
+  const [showCashCount, setShowCashCount] = useState(false);
+  const [cashCount, setCashCount] = useState<Record<string, number>>({});
+  const formatMoney = (n:number)=> '$' + (n||0).toFixed(2);
+  const openSession = cashSessions.find((s:any)=> s.status === 'Abierta') || null;
+  const filteredSessions = cashSessions.filter((s:any)=> {
+    const d = new Date(s.startTime).toISOString().split('T')[0];
+    return d >= dateFilter.startDate && d <= dateFilter.endDate;
+  });
+  const denominations = (() => {
+    try {
+      const d = localStorage.getItem('cashDenominations');
+      if (d) return JSON.parse(d) as number[];
+    } catch {}
+    return [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5];
+  })();
+  const countedCashTotal = denominations.reduce((sum, d)=> sum + d * (cashCount[String(d)]||0), 0);
+  const setDenom = (den:number, val:number)=> {
+    setCashCount(prev=> ({ ...prev, [String(den)]: Math.max(0, Math.floor(val)||0) }));
+  };
+  const useCountAsFinal = ()=> {
+    setNewSession(s=> ({ ...s, finalAmount: Number(countedCashTotal.toFixed(2)) }));
+  };
+  const exportSessionCSV = (session:any)=> {
+    const items = getSessionSales(session);
+    const header = ['Fecha','ID Venta','ClienteID','Método','Subtotal','Descuento','Impuesto','Total'];
+    const rows = items.map((s:any)=> [
+      new Date(s.createdAt).toLocaleString('es-MX'),
+      s.id,
+      s.customerId || '',
+      s.paymentMethod || 'Otro',
+      (s.subtotal||0).toFixed(2),
+      (s.discount||0).toFixed(2),
+      (s.tax||0).toFixed(2),
+      (s.total||0).toFixed(2)
+    ]);
+    const csv = [header, ...rows].map(r=> r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `corte_caja_${session.id||'sesion'}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const printSession = (session:any)=> {
+    const s = summarizeSession(session);
+    const lines = getSessionSales(session).map((v:any)=> `• ${new Date(v.createdAt).toLocaleString('es-MX')} — ${v.paymentMethod||'Otro'} — ${formatMoney(v.total)}`).join('<br/>');
+    const html = `
+      <html><head><title>Corte de Caja</title>
+      <style>body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding:16px} h2{margin:0 0 8px} .row{margin:4px 0}</style>
+      </head><body>
+      <h2>Reporte de Corte de Caja</h2>
+      <div class="row"><b>Sesión:</b> ${session.id||'-'}</div>
+      <div class="row"><b>Inicio:</b> ${new Date(session.startTime).toLocaleString('es-MX')}</div>
+      <div class="row"><b>Fin:</b> ${session.endTime ? new Date(session.endTime).toLocaleString('es-MX') : '-'}</div>
+      <hr/>
+      <div class="row"><b>Total ventas:</b> ${formatMoney(s.total)} (${s.count} transacciones)</div>
+      <div class="row"><b>Efectivo:</b> ${formatMoney(s.byMethod['Efectivo']||0)}</div>
+      <div class="row"><b>Tarjeta:</b> ${formatMoney(s.byMethod['Tarjeta']||0)}</div>
+      <div class="row"><b>Transferencia:</b> ${formatMoney(s.byMethod['Transferencia']||0)}</div>
+      <div class="row"><b>Impuestos:</b> ${formatMoney(s.totalTax)}</div>
+      <div class="row"><b>Descuentos:</b> ${formatMoney(s.totalDiscount)}</div>
+      <div class="row"><b>Efectivo esperado:</b> ${formatMoney(s.expectedCash)}</div>
+      ${session.finalAmount ? `<div class="row"><b>Efectivo reportado:</b> ${formatMoney(session.finalAmount)}</div>` : ''}
+      ${session.finalAmount ? `<div class="row"><b>Diferencia:</b> ${formatMoney((session.finalAmount||0) - s.expectedCash)}</div>` : ''}
+      <hr/>
+      <div><b>Ventas</b></div>
+      <div>${lines || 'Sin ventas'}</div>
+      </body></html>`;
+    const w = window.open('', '_blank', 'width=800,height=900');
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+    w.close();
+  };
+
   return (
     <div style={{ padding: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
         <h1>💰 Corte de Caja</h1>
         <button 
-          onClick={() => { setShowAddForm(true); setEditingSession(null); setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' }); }}
+          onClick={() => { if (openSession) return; setShowAddForm(true); setEditingSession(null); setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' }); setShowCashCount(false); setCashCount({}); }}
           style={{ 
-            background: '#4caf50', 
-            color: 'white', 
+            background: openSession ? '#9e9e9e' : '#4caf50', 
+            color: '#fff', 
             padding: '12px 24px', 
             border: 'none', 
             borderRadius: '4px', 
             cursor: 'pointer',
             fontSize: '16px'
           }}
+          disabled={!!openSession}
+          title={openSession ? 'Ya hay una sesión abierta' : 'Abrir nueva sesión'}
         >
           + Nueva Sesión
         </button>
+      </div>
+
+      {openSession && (()=>{ const s = summarizeSession(openSession); return (
+        <div style={{ marginBottom:16, padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff', display:'grid', gridTemplateColumns:'1fr auto', gap:12 }}>
+          <div>
+            <div style={{ fontWeight:600 }}>Sesión abierta desde {new Date(openSession.startTime).toLocaleString('es-MX')}</div>
+            <div style={{ display:'flex', gap:16, marginTop:8, flexWrap:'wrap' }}>
+              <div>Inicial: <strong>{formatMoney(openSession.initialAmount)}</strong></div>
+              <div>Efectivo: <strong>{formatMoney(s.byMethod['Efectivo']||0)}</strong></div>
+              <div>Esperado: <strong>{formatMoney(s.expectedCash)}</strong></div>
+              <div>Ventas: <strong>{s.count}</strong></div>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            <button onClick={()=> setDetailSession(openSession)} style={{ padding:'8px 12px', border:'1px solid #2196f3', background:'#fff', color:'#2196f3', borderRadius:6, cursor:'pointer' }}>Ver detalle</button>
+            <button onClick={()=> handleEdit(openSession)} style={{ padding:'8px 12px', border:'1px solid #d32f2f', background:'#fff', color:'#d32f2f', borderRadius:6, cursor:'pointer' }}>Cerrar ahora</button>
+          </div>
+        </div>
+      ); })()}
+
+      {/* Filtros por fecha */}
+      <div style={{ display:'flex', gap:12, alignItems:'center', marginBottom:14 }}>
+        <label style={{ color:'#666' }}>Periodo:</label>
+        <input type="date" value={dateFilter.startDate} onChange={e=> setDateFilter(p=> ({...p, startDate:e.target.value}))} style={{ padding:'8px 10px', border:'1px solid #ddd', borderRadius:6 }} />
+        <span style={{ color:'#666' }}>a</span>
+        <input type="date" value={dateFilter.endDate} onChange={e=> setDateFilter(p=> ({...p, endDate:e.target.value}))} style={{ padding:'8px 10px', border:'1px solid #ddd', borderRadius:6 }} />
       </div>
 
       {/* Formulario */}
@@ -1357,6 +1497,29 @@ const CashSession = () => {
                     required
                     style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                   />
+                </div>
+              )}
+              {editingSession && (
+                <div style={{ marginBottom:12, border:'1px dashed #ddd', borderRadius:8 }}>
+                  <button type="button" onClick={()=> setShowCashCount(v=>!v)} style={{ display:'block', width:'100%', textAlign:'left', background:'#fafafa', border:'none', borderBottom:'1px dashed #ddd', padding:'8px 10px', borderRadius:'8px 8px 0 0', cursor:'pointer' }}>
+                    🧮 Arqueo de efectivo (opcional)
+                  </button>
+                  {showCashCount && (
+                    <div style={{ padding:10 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:10 }}>
+                        {denominations.map(den=> (
+                          <div key={den} style={{ display:'flex', alignItems:'center', gap:8 }}>
+                            <label style={{ minWidth:58 }}>{den >= 1 ? `$${den}` : `${den}¢`}</label>
+                            <input type="number" min={0} step={1} value={cashCount[String(den)]||0} onChange={e=> setDenom(den, Number(e.target.value)||0)} style={{ flex:1, padding:'6px 8px', border:'1px solid #ddd', borderRadius:6 }} />
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop:10, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                        <div>Total contado: <strong>{formatMoney(countedCashTotal)}</strong></div>
+                        <button type="button" onClick={useCountAsFinal} style={{ padding:'6px 10px', border:'1px solid #4caf50', background:'#fff', color:'#4caf50', borderRadius:6, cursor:'pointer' }}>Usar como monto final</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <div style={{ marginBottom: '20px' }}>
@@ -1432,7 +1595,7 @@ const CashSession = () => {
             </tr>
           </thead>
           <tbody>
-            {cashSessions.map((session) => (
+            {filteredSessions.map((session) => (
               <tr key={session.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                 <td style={{ padding: '12px' }}>{formatDateTime(session.startTime)}</td>
                 <td style={{ padding: '12px' }}>
@@ -1499,7 +1662,11 @@ const CashSession = () => {
           <div style={{ background:'#fff', borderRadius:8, padding:24, width:'min(860px, 94vw)', maxHeight:'90vh', overflow:'auto', border:'1px solid #e0e0e0' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
               <h3 style={{ margin:0 }}>📊 Detalle de Sesión</h3>
-              <button onClick={() => setDetailSession(null)} style={{ border:'none', background:'#eee', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Cerrar</button>
+              <div style={{ display:'flex', gap:8 }}>
+                <button onClick={()=> exportSessionCSV(detailSession)} style={{ border:'1px solid #1976d2', color:'#1976d2', background:'#fff', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Exportar CSV</button>
+                <button onClick={()=> printSession(detailSession)} style={{ border:'1px solid #4caf50', color:'#4caf50', background:'#fff', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Imprimir</button>
+                <button onClick={() => setDetailSession(null)} style={{ border:'none', background:'#eee', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Cerrar</button>
+              </div>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:16, marginBottom:16 }}>
               <div className="stat-card" style={{ padding:16 }}><div style={{color:'#6a6a6a'}}>Ventas Totales</div><div style={{fontWeight:700, fontSize:22}}>${s.total.toFixed(2)}</div></div>
@@ -1517,11 +1684,27 @@ const CashSession = () => {
                 <div>Otro: <strong>${(s.byMethod['Otro']||0).toFixed(2)}</strong></div>
               </div>
             </div>
-            <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
+            <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff', marginBottom:12 }}>
               <div><strong>Efectivo Esperado</strong>: ${s.expectedCash.toFixed(2)}</div>
               <div><strong>Efectivo Reportado</strong>: ${detailSession.finalAmount ? detailSession.finalAmount.toFixed(2) : 0}</div>
               <div style={{ marginTop:6, fontWeight:'bold', color:(detailSession.finalAmount - s.expectedCash)===0? '#4caf50' : (detailSession.finalAmount - s.expectedCash)>0 ? '#2e7d32' : '#d32f2f' }}>
                 Diferencia: ${(detailSession.finalAmount - s.expectedCash).toFixed(2)}
+              </div>
+            </div>
+            <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
+              <div style={{ fontWeight:600, marginBottom:8 }}>🧾 Ventas de la sesión</div>
+              <div style={{ maxHeight:260, overflow:'auto' }}>
+                {getSessionSales(detailSession).length === 0 ? (
+                  <div style={{ color:'#666' }}>Sin ventas</div>
+                ) : (
+                  getSessionSales(detailSession).map((v:any)=> (
+                    <div key={v.id} style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:10, padding:'6px 0', borderBottom:'1px dashed #eee' }}>
+                      <div style={{ fontSize:13 }}>{new Date(v.createdAt).toLocaleString('es-MX')}</div>
+                      <div style={{ fontSize:13, color:'#555' }}>{v.paymentMethod||'Otro'}</div>
+                      <div style={{ fontWeight:600 }}>${(v.total||0).toFixed(2)}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -1541,6 +1724,9 @@ const Reports = () => {
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   });
+  const [paymentFilter, setPaymentFilter] = useState<'Todos'|'Efectivo'|'Tarjeta'|'Transferencia'|'Otro'>('Todos');
+  const [productQuery, setProductQuery] = useState('');
+  const [customerQuery, setCustomerQuery] = useState('');
 
   useEffect(() => {
     loadData();
@@ -1565,8 +1751,103 @@ const Reports = () => {
 
   const filteredSales = sales.filter(sale => {
     const saleDate = new Date(sale.createdAt).toISOString().split('T')[0];
-    return saleDate >= dateRange.startDate && saleDate <= dateRange.endDate;
+    const inRange = saleDate >= dateRange.startDate && saleDate <= dateRange.endDate;
+    const method = sale.paymentMethod || 'Otro';
+    const methodOk = paymentFilter === 'Todos' || method === paymentFilter;
+    return inRange && methodOk;
   });
+
+  const setQuickRange = (key: 'hoy'|'7d'|'30d'|'mes') => {
+    const now = new Date();
+    if (key === 'hoy') {
+      const d = now.toISOString().split('T')[0];
+      setDateRange({ startDate: d, endDate: d });
+    } else if (key === '7d') {
+      const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const end = now.toISOString().split('T')[0];
+      setDateRange({ startDate: start, endDate: end });
+    } else if (key === '30d') {
+      const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const end = now.toISOString().split('T')[0];
+      setDateRange({ startDate: start, endDate: end });
+    } else if (key === 'mes') {
+      const y = now.getFullYear();
+      const m = now.getMonth();
+      const start = new Date(y, m, 1).toISOString().split('T')[0];
+      const end = new Date(y, m+1, 0).toISOString().split('T')[0];
+      setDateRange({ startDate: start, endDate: end });
+    }
+  };
+
+  const exportSalesCSV = () => {
+    const header = ['Fecha','ID Venta','ClienteID','Método','Subtotal','Descuento','Impuesto','Total'];
+    const rows = filteredSales.map((s:any)=> [
+      new Date(s.createdAt).toLocaleString('es-MX'),
+      s.id,
+      s.customerId || '',
+      s.paymentMethod || 'Otro',
+      (s.subtotal||0).toFixed(2),
+      (s.discount||0).toFixed(2),
+      (s.tax||0).toFixed(2),
+      (s.total||0).toFixed(2)
+    ]);
+    const csv = [header, ...rows].map(r=> r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reporte_ventas_${dateRange.startDate}_a_${dateRange.endDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportProductsCSV = () => {
+    const list = getProductSales();
+    const header = ['Producto','Categoría','Cantidad','Ingresos'];
+    const rows = list.map((p:any)=> [p.name, p.category, p.quantity, p.revenue.toFixed(2)]);
+    const csv = [header, ...rows].map(r=> r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'productos_top.csv'; a.click(); URL.revokeObjectURL(url);
+  };
+
+  const exportCustomersCSV = () => {
+    const list = getCustomerStats();
+    const header = ['Cliente','Compras','Total','Promedio','ÚltimaCompra'];
+    const rows = list.map((c:any)=> [c.customer.name, c.purchases, c.total.toFixed(2), c.avgPurchase.toFixed(2), new Date(c.lastPurchase).toLocaleString('es-MX')]);
+    const csv = [header, ...rows].map(r=> r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'clientes_top.csv'; a.click(); URL.revokeObjectURL(url);
+  };
+
+  const exportCategoriesCSV = () => {
+    const list = getCategoryStats();
+    const header = ['Categoría','Productos','Cantidad','Ingresos','PromedioPorProducto'];
+    const rows = list.map((c:any)=> [c.category, c.products, c.quantity, c.revenue.toFixed(2), (c.products>0?(c.revenue/c.products):0).toFixed(2)]);
+    const csv = [header, ...rows].map(r=> r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'categorias.csv'; a.click(); URL.revokeObjectURL(url);
+  };
+
+  const printReport = () => {
+    const s = calculateStats();
+    const byMethod = filteredSales.reduce((acc:any, v:any)=> { const m = v.paymentMethod||'Otro'; acc[m]=(acc[m]||0)+(v.total||0); return acc; }, {});
+    const html = `
+      <html><head><title>Reporte</title>
+      <style>body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding:16px} h2{margin:0 0 8px} .row{margin:4px 0}</style>
+      </head><body>
+      <h2>Reporte de Ventas</h2>
+      <div class="row"><b>Periodo:</b> ${dateRange.startDate} a ${dateRange.endDate}</div>
+      <div class="row"><b>Ventas Totales:</b> $${s.totalSales.toFixed(2)} (${s.totalTransactions} transacciones)</div>
+      <div class="row"><b>Promedio:</b> $${s.avgSale.toFixed(2)} | <b>Descuentos:</b> $${s.totalDiscount.toFixed(2)} | <b>Impuestos:</b> $${s.totalTax.toFixed(2)}</div>
+      <div class="row"><b>Por método:</b> Efectivo $${(byMethod['Efectivo']||0).toFixed(2)} · Tarjeta $${(byMethod['Tarjeta']||0).toFixed(2)} · Transferencia $${(byMethod['Transferencia']||0).toFixed(2)} · Otro $${(byMethod['Otro']||0).toFixed(2)}</div>
+      </body></html>`;
+    const w = window.open('', '_blank', 'width=800,height=900');
+    if (!w) return;
+    w.document.write(html); w.document.close(); w.focus(); w.print(); w.close();
+  };
 
   const calculateStats = () => {
     const totalSales = filteredSales.reduce((sum, sale) => sum + sale.total, 0);
@@ -1798,6 +2079,10 @@ const Reports = () => {
       {/* Productos más vendidos */}
       <div style={{ marginBottom: '30px' }}>
         <h2 style={{ color: '#2196f3', marginBottom: '15px' }}>🏆 Productos Más Vendidos</h2>
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:10 }}>
+          <input placeholder="Buscar producto o categoría" value={productQuery} onChange={e=> setProductQuery(e.target.value)} style={{ flex:1, padding:'8px 10px', border:'1px solid #ddd', borderRadius:8 }} />
+          <button onClick={exportProductsCSV} style={{ padding:'8px 12px', border:'1px solid #1976d2', background:'#fff', color:'#1976d2', borderRadius:8, cursor:'pointer' }}>Exportar CSV</button>
+        </div>
         <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ background: 'linear-gradient(135deg, #f5f5f5, #e8e8e8)' }}>
@@ -1809,7 +2094,9 @@ const Reports = () => {
               </tr>
             </thead>
             <tbody>
-              {productSales.slice(0, 10).map((product, index) => (
+              {productSales.filter((p:any)=> (
+                  !productQuery || p.name.toLowerCase().includes(productQuery.toLowerCase()) || (p.category||'').toLowerCase().includes(productQuery.toLowerCase())
+                )).slice(0, 10).map((product, index) => (
                 <tr key={index} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '12px 15px', fontWeight: 'bold' }}>{product.name}</td>
                   <td style={{ padding: '12px 15px' }}>
@@ -1841,6 +2128,10 @@ const Reports = () => {
       {/* Top clientes */}
       <div style={{ marginBottom: '30px' }}>
         <h2 style={{ color: '#4caf50', marginBottom: '15px' }}>👥 Mejores Clientes</h2>
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:10 }}>
+          <input placeholder="Buscar cliente (nombre, email, tel)" value={customerQuery} onChange={e=> setCustomerQuery(e.target.value)} style={{ flex:1, padding:'8px 10px', border:'1px solid #ddd', borderRadius:8 }} />
+          <button onClick={exportCustomersCSV} style={{ padding:'8px 12px', border:'1px solid #2e7d32', background:'#fff', color:'#2e7d32', borderRadius:8, cursor:'pointer' }}>Exportar CSV</button>
+        </div>
         <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ background: 'linear-gradient(135deg, #f5f5f5, #e8e8e8)' }}>
@@ -1854,7 +2145,11 @@ const Reports = () => {
               </tr>
             </thead>
             <tbody>
-              {customerStats.slice(0, 10).map((stat, index) => (
+              {customerStats.filter((stat:any)=> {
+                const q = customerQuery.toLowerCase();
+                const c = stat.customer;
+                return !customerQuery || (c.name||'').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q) || (c.phone||'').toLowerCase().includes(q);
+              }).slice(0, 10).map((stat, index) => (
                 <tr key={index} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '15px' }}>
                     <div>
@@ -2053,6 +2348,9 @@ const Reports = () => {
     <div>
       {/* Análisis por categorías */}
       <h2 style={{ color: '#ff9800', marginBottom: '20px' }}>🏷️ Análisis por Categorías</h2>
+      <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:10 }}>
+        <button onClick={exportCategoriesCSV} style={{ padding:'8px 12px', border:'1px solid #ff9800', background:'#fff', color:'#ff9800', borderRadius:8, cursor:'pointer' }}>Exportar CSV</button>
+      </div>
       <div style={{ background: 'white', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ background: 'linear-gradient(135deg, #f5f5f5, #e8e8e8)' }}>
@@ -2114,6 +2412,21 @@ const Reports = () => {
           onChange={(e) => setDateRange({...dateRange, endDate: e.target.value})}
           style={{ padding: '10px', border: '1px solid #ddd', borderRadius: '8px', fontSize: '14px' }}
         />
+        <div style={{ marginLeft:'auto', display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+          <button onClick={()=> setQuickRange('hoy')} style={{ padding:'8px 10px', border:'1px solid #ddd', background:'#fff', borderRadius:8, cursor:'pointer' }}>Hoy</button>
+          <button onClick={()=> setQuickRange('7d')} style={{ padding:'8px 10px', border:'1px solid #ddd', background:'#fff', borderRadius:8, cursor:'pointer' }}>Últimos 7 días</button>
+          <button onClick={()=> setQuickRange('30d')} style={{ padding:'8px 10px', border:'1px solid #ddd', background:'#fff', borderRadius:8, cursor:'pointer' }}>Últimos 30 días</button>
+          <button onClick={()=> setQuickRange('mes')} style={{ padding:'8px 10px', border:'1px solid #ddd', background:'#fff', borderRadius:8, cursor:'pointer' }}>Mes actual</button>
+          <select value={paymentFilter} onChange={e=> setPaymentFilter(e.target.value as any)} style={{ padding:'8px 10px', border:'1px solid #ddd', borderRadius:8 }}>
+            <option value="Todos">Todos</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="Tarjeta">Tarjeta</option>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Otro">Otro</option>
+          </select>
+          <button onClick={exportSalesCSV} style={{ padding:'8px 12px', border:'1px solid #1976d2', background:'#fff', color:'#1976d2', borderRadius:8, cursor:'pointer' }}>Exportar Ventas</button>
+          <button onClick={printReport} style={{ padding:'8px 12px', border:'1px solid #4caf50', background:'#fff', color:'#4caf50', borderRadius:8, cursor:'pointer' }}>Imprimir</button>
+        </div>
       </div>
 
       {/* Pestañas de navegación */}
@@ -2148,6 +2461,12 @@ const Settings = () => {
   const [settings, setSettings] = useState<any[]>([]);
   const [editingSetting, setEditingSetting] = useState<any>(null);
   const [newValue, setNewValue] = useState('');
+  // Seguridad y preferencias avanzadas
+  const [security, setSecurity] = useState({
+    dashboardPassword: '080808',
+    maskAmountsByDefault: true
+  });
+  const [cashDenominations, setCashDenominations] = useState<number[]>([1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5]);
   const [discountLevels, setDiscountLevels] = useState({
     Bronze: 0,
     Silver: 5,
@@ -2190,6 +2509,15 @@ const Settings = () => {
     loadSettings();
     loadBusinessSettings();
     loadClientClassificationSettings();
+    // Cargar seguridad y denominaciones
+    try {
+      const sec = localStorage.getItem('securitySettings');
+      if (sec) setSecurity(JSON.parse(sec));
+    } catch {}
+    try {
+      const den = localStorage.getItem('cashDenominations');
+      if (den) setCashDenominations(JSON.parse(den));
+    } catch {}
   }, []);
 
   const loadClientClassificationSettings = () => {
@@ -2278,12 +2606,33 @@ const Settings = () => {
 
   const saveBusinessSettings = () => {
     localStorage.setItem('businessSettings', JSON.stringify(businessSettings));
+    // Espejar a settings del backend si aplica
+    try {
+      window.electronAPI?.updateSetting?.('business_name', businessSettings.businessName);
+      const tax = (businessSettings.taxRate || 0) / 100;
+      window.electronAPI?.updateSetting?.('tax_rate', String(tax));
+    } catch {}
     alert('Configuración del negocio actualizada correctamente');
   };
 
   const saveSystemSettings = () => {
     localStorage.setItem('systemSettings', JSON.stringify(systemSettings));
     alert('Configuración del sistema actualizada correctamente');
+  };
+
+  const saveSecurity = () => {
+    localStorage.setItem('securitySettings', JSON.stringify(security));
+    if (security.dashboardPassword) localStorage.setItem('dashboardPassword', security.dashboardPassword);
+    alert('Seguridad actualizada');
+  };
+
+  const saveDenominations = () => {
+    // Normalizar: quitar duplicados, números positivos, orden descendente
+    const cleaned = Array.from(new Set(cashDenominations.filter(n => typeof n === 'number' && n > 0)))
+      .sort((a,b)=> b-a);
+    setCashDenominations(cleaned);
+    localStorage.setItem('cashDenominations', JSON.stringify(cleaned));
+    alert('Denominaciones de efectivo guardadas');
   };
 
   const getInputType = (key: string) => {
@@ -2302,7 +2651,38 @@ const Settings = () => {
     <div style={{ padding: '20px', maxHeight: '100vh', overflowY: 'auto' }}>
       <h1>⚙️ Configuración del Sistema</h1>
       
-      <div style={{ display: 'grid', gap: '25px', maxWidth: '1000px' }}>
+      <div style={{ display: 'grid', gap: '25px', maxWidth: '1100px' }}>
+
+        {/* Seguridad y privacidad */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e0e0e0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+          <h3 style={{ 
+            marginTop: 0, 
+            color: '#6a1b9a', 
+            borderBottom: '3px solid #ede7f6', 
+            paddingBottom: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            🔐 Seguridad y privacidad
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 16 }}>
+            <div>
+              <label style={{ display:'block', marginBottom:4, fontWeight:'bold' }}>Contraseña para Dashboard</label>
+              <input type="password" value={security.dashboardPassword}
+                onChange={e=> setSecurity(prev=> ({ ...prev, dashboardPassword: e.target.value }))}
+                placeholder="••••••" style={{ width:'100%', padding:'10px', border:'1px solid #ddd', borderRadius:6 }} />
+              <small style={{ color:'#666' }}>Se usa para revelar montos en el dashboard</small>
+            </div>
+            <label style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <input type="checkbox" checked={security.maskAmountsByDefault} onChange={e=> setSecurity(prev=> ({ ...prev, maskAmountsByDefault: e.target.checked }))} />
+              Ocultar montos por defecto en Dashboard
+            </label>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button onClick={saveSecurity} style={{ background:'#6a1b9a', color:'#fff', border:'none', padding:'10px 16px', borderRadius:6, cursor:'pointer', fontWeight:700 }}>💾 Guardar seguridad</button>
+          </div>
+        </div>
         
         {/* Configuración de Niveles de Descuento */}
         <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e0e0e0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
@@ -2587,6 +2967,35 @@ const Settings = () => {
           >
             💾 Guardar Configuración del Sistema
           </button>
+        </div>
+
+        {/* Preferencias de Corte de Caja */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e0e0e0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+          <h3 style={{ marginTop:0, color:'#795548', borderBottom:'3px solid #efebe9', paddingBottom:12, display:'flex', alignItems:'center', gap:10 }}>
+            💵 Denominaciones de efectivo
+          </h3>
+          <div>
+            <p style={{ marginTop:0, color:'#555' }}>Configura las denominaciones usadas en el arqueo de efectivo del módulo Corte de Caja.</p>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:10, marginBottom:12 }}>
+              {cashDenominations.map((d, idx)=> (
+                <div key={idx} style={{ display:'flex', alignItems:'center', gap:6, border:'1px solid #ddd', borderRadius:6, padding:'6px 8px', background:'#fafafa' }}>
+                  <span>$</span>
+                  <input type="number" min={0.01} step={0.01} value={d}
+                    onChange={e=> {
+                      const val = parseFloat(e.target.value)||0;
+                      setCashDenominations(prev=> prev.map((x,i)=> i===idx ? val : x));
+                    }}
+                    style={{ width:90, padding:'6px 8px', border:'1px solid #ddd', borderRadius:6 }} />
+                  <button onClick={()=> setCashDenominations(prev=> prev.filter((_,i)=> i!==idx))} style={{ background:'#fff', border:'1px solid #e57373', color:'#e57373', borderRadius:6, padding:'4px 8px', cursor:'pointer' }}>Eliminar</button>
+                </div>
+              ))}
+              <button onClick={()=> setCashDenominations(prev=> [...prev, 0])} style={{ background:'#fff', border:'1px dashed #bbb', color:'#555', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>+ Agregar</button>
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              <button onClick={saveDenominations} style={{ background:'#795548', color:'#fff', border:'none', padding:'10px 16px', borderRadius:6, cursor:'pointer', fontWeight:700 }}>💾 Guardar denominaciones</button>
+              <button onClick={()=> setCashDenominations([1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5])} style={{ background:'#fff', border:'1px solid #795548', color:'#795548', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}>Restablecer MX</button>
+            </div>
+          </div>
         </div>
 
         {/* Configuración de Clasificación Automática de Clientes */}
@@ -2997,7 +3406,10 @@ const Settings = () => {
                 const allSettings = {
                   discountLevels,
                   businessSettings,
-                  systemSettings
+                  systemSettings,
+                  security,
+                  clientClassificationSettings,
+                  cashDenominations
                 };
                 const dataStr = JSON.stringify(allSettings, null, 2);
                 const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -3030,6 +3442,48 @@ const Settings = () => {
             </button>
             <button
               onClick={() => {
+                // Importar desde archivo
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'application/json';
+                input.onchange = async () => {
+                  const file = (input.files && input.files[0]) as File;
+                  if (!file) return;
+                  const text = await file.text();
+                  try {
+                    const data = JSON.parse(text);
+                    if (data.discountLevels) { setDiscountLevels(data.discountLevels); localStorage.setItem('discountLevels', JSON.stringify(data.discountLevels)); }
+                    if (data.businessSettings) { setBusinessSettings(data.businessSettings); localStorage.setItem('businessSettings', JSON.stringify(data.businessSettings)); }
+                    if (data.systemSettings) { setSystemSettings(data.systemSettings); localStorage.setItem('systemSettings', JSON.stringify(data.systemSettings)); }
+                    if (data.security) { setSecurity(data.security); localStorage.setItem('securitySettings', JSON.stringify(data.security)); if (data.security.dashboardPassword) localStorage.setItem('dashboardPassword', data.security.dashboardPassword); }
+                    if (data.clientClassificationSettings) { setClientClassificationSettings(data.clientClassificationSettings); localStorage.setItem('clientClassificationSettings', JSON.stringify(data.clientClassificationSettings)); }
+                    if (data.cashDenominations) { setCashDenominations(data.cashDenominations); localStorage.setItem('cashDenominations', JSON.stringify(data.cashDenominations)); }
+                    alert('Configuraciones importadas');
+                  } catch (e) {
+                    alert('Archivo inválido');
+                  }
+                };
+                input.click();
+              }}
+              style={{ 
+                background: '#8d6e63', 
+                color: 'white', 
+                border: 'none', 
+                padding: '15px 20px', 
+                borderRadius: '8px', 
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+            >
+              📥 Importar Configuraciones
+            </button>
+            <button
+              onClick={() => {
                 alert('Funcionalidad de respaldo no implementada en la versión demo');
               }}
               style={{ 
@@ -3055,6 +3509,10 @@ const Settings = () => {
                   localStorage.removeItem('discountLevels');
                   localStorage.removeItem('businessSettings');
                   localStorage.removeItem('systemSettings');
+                  localStorage.removeItem('securitySettings');
+                  localStorage.removeItem('clientClassificationSettings');
+                  localStorage.removeItem('cashDenominations');
+                  localStorage.removeItem('dashboardPassword');
                   window.location.reload();
                 }
               }}
