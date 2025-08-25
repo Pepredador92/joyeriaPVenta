@@ -38,7 +38,7 @@ const Dashboard = () => {
   });
 
   // Privacy/masking state
-  const ADMIN_DASHBOARD_PASSWORD = '2468';
+  const ADMIN_DASHBOARD_PASSWORD = '080808';
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
@@ -46,6 +46,20 @@ const Dashboard = () => {
   const ATTEMPT_LIMIT = 3;
   const COOLDOWN_MS = 30_000; // 30s
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+
+  // Data state
+  const [products, setProducts] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
+  const [cashSessions, setCashSessions] = useState<any[]>([]);
+  const [settings, setSettings] = useState<any[]>([]);
+
+  // Date range state
+  type RangeKind = 'hoy' | '7d' | '30d' | 'mes' | 'custom';
+  const [rangeKind, setRangeKind] = useState<RangeKind>('hoy');
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [customStart, setCustomStart] = useState<string>(todayStr);
+  const [customEnd, setCustomEnd] = useState<string>(todayStr);
 
   useEffect(() => {
     loadStats();
@@ -59,20 +73,27 @@ const Dashboard = () => {
   const loadStats = async () => {
     try {
       if (window.electronAPI) {
-        const [products, customers, sales] = await Promise.all([
+        const [productsData, customersData, salesData, sessionsData, settingsData] = await Promise.all([
           window.electronAPI.getProducts(),
           window.electronAPI.getCustomers(),
-          window.electronAPI.getSales()
-        ]);
+          window.electronAPI.getSales(),
+          window.electronAPI.getCashSessions?.() || Promise.resolve([]),
+          window.electronAPI.getSettings?.() || Promise.resolve([])
+        ] as any);
+        setProducts(productsData);
+        setCustomers(customersData);
+        setSales(salesData);
+        setCashSessions(sessionsData || []);
+        setSettings(settingsData || []);
         const today = new Date().toDateString();
-        const salesToday = sales
+        const salesToday = salesData
           .filter((sale: any) => new Date(sale.createdAt).toDateString() === today)
           .reduce((sum: number, sale: any) => sum + sale.total, 0);
         setStats({
           salesToday,
-            totalProducts: products.length,
-            totalCustomers: customers.length,
-            salesCount: sales.length
+            totalProducts: productsData.length,
+            totalCustomers: customersData.length,
+            salesCount: salesData.length
         });
       }
     } catch (error) {
@@ -80,7 +101,6 @@ const Dashboard = () => {
     }
   };
 
-  const maskedMoney = () => '••••••';
   const handleShowAmounts = () => {
     const now = Date.now();
     if (cooldownUntil && now < cooldownUntil) {
@@ -133,11 +153,142 @@ const Dashboard = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [showPasswordModal]);
 
+  // Helpers for date range, money and aggregations
+  const toCurrency = (n:number) => `$${n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const masked = () => '••••••';
+  const money = (n:number) => (isUnlocked ? toCurrency(n) : masked());
+
+  const startOfMonth = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), 1);
+  const addDays = (d: Date, days: number) => new Date(d.getTime() + days*86400000);
+  const floorDate = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const getRange = (): { start: Date; end: Date } => {
+    const today = floorDate(new Date());
+    switch (rangeKind) {
+      case 'hoy': return { start: today, end: addDays(today, 1) };
+      case '7d': return { start: addDays(today, -6), end: addDays(today, 1) };
+      case '30d': return { start: addDays(today, -29), end: addDays(today, 1) };
+      case 'mes': return { start: startOfMonth(today), end: addDays(today, 1) };
+      case 'custom': {
+        const s = new Date(customStart + 'T00:00:00');
+        const e = addDays(new Date(customEnd + 'T00:00:00'), 1);
+        return { start: s, end: e };
+      }
+      default: return { start: today, end: addDays(today, 1) };
+    }
+  };
+
+  const { start, end } = getRange();
+  const filteredSales = sales.filter((s:any)=> {
+    const d = new Date(s.createdAt);
+    return d >= start && d < end;
+  });
+
+  const kpis = (() => {
+    const total = filteredSales.reduce((sum:number, s:any)=> sum + (s.total||0), 0);
+    const count = filteredSales.length;
+    const avg = count ? total / count : 0;
+    const byMethod: Record<string, number> = {};
+    filteredSales.forEach((s:any)=> {
+      const m = s.paymentMethod || 'Otro';
+      byMethod[m] = (byMethod[m]||0) + (s.total||0);
+    });
+    return { total, count, avg, byMethod };
+  })();
+
+  // Trend (daily totals within range up to 30 pts)
+  const buildDailySeries = () => {
+    const days = Math.min(30, Math.ceil((end.getTime()-start.getTime())/86400000));
+    const series: { date: Date; total: number }[] = [];
+    for (let i=0; i<days; i++) {
+      const d0 = addDays(start, i);
+      const d1 = addDays(start, i+1);
+      const t = sales.reduce((sum:number, s:any)=> {
+        const d = new Date(s.createdAt);
+        return (d>=d0 && d<d1) ? sum + (s.total||0) : sum;
+      }, 0);
+      series.push({ date: d0, total: t });
+    }
+    return series;
+  };
+  const series = buildDailySeries();
+  const maxY = Math.max(1, ...series.map(p=>p.total));
+
+  // Top categorías (por ingresos)
+  const topCategorias = (() => {
+    const map = new Map<string, number>();
+    filteredSales.forEach((s:any)=> {
+      (s.items||[]).forEach((it:any)=> {
+        let cat = 'Otros';
+        if (it.productId && it.productId !== 0) {
+          const p = products.find(pr=> pr.id === it.productId);
+          cat = p?.category || 'Otros';
+        } else if (s.notes && typeof s.notes === 'string') {
+          const m = s.notes.match(/Categoría:\s*([^|]+)/i);
+          if (m) cat = m[1].trim();
+        }
+        map.set(cat, (map.get(cat)||0) + (it.subtotal || 0));
+      });
+    });
+    return Array.from(map.entries()).sort((a,b)=> b[1]-a[1]).slice(0,5);
+  })();
+
+  // Low stock
+  const lowStock = products.filter(p=> (p.stock??0) > 0 && (p.stock??0) < 10).sort((a,b)=> a.stock-b.stock).slice(0,6);
+
+  // Top clientes
+  const topClientes = (()=> {
+    const byCustomer = new Map<number, { customer:any, total:number }>();
+    filteredSales.forEach((s:any)=> {
+      if (!s.customerId) return;
+      const c = customers.find(cc=> cc.id === s.customerId);
+      if (!c) return;
+      const cur = byCustomer.get(s.customerId) || { customer: c, total: 0 };
+      cur.total += (s.total||0);
+      byCustomer.set(s.customerId, cur);
+    });
+    return Array.from(byCustomer.values()).sort((a,b)=> b.total-a.total).slice(0,5);
+  })();
+
+  // New vs recurrentes en el rango
+  const newVsReturning = (()=>{
+    let nuevos = 0, recurrentes = 0;
+    const startTs = start.getTime();
+    const salesByCustomer = new Map<number, number[]>();
+    sales.forEach((s:any)=> { if (s.customerId) {
+      const arr = salesByCustomer.get(s.customerId) || [];
+      arr.push(new Date(s.createdAt).getTime());
+      salesByCustomer.set(s.customerId, arr);
+    }});
+    const idsInRange = new Set<number>();
+    filteredSales.forEach((s:any)=> { if (s.customerId) idsInRange.add(s.customerId); });
+    idsInRange.forEach(id=> {
+      const arr = (salesByCustomer.get(id)||[]).filter(ts=> ts < startTs);
+      if (arr.length === 0) nuevos++; else recurrentes++;
+    });
+    return { nuevos, recurrentes };
+  })();
+
+  // Sesión de caja
+  const openSession = (cashSessions||[]).find((s:any)=> s.status === 'Abierta') || null;
+
   return (
     <div className="lux-dashboard" style={{ padding: '36px min(4vw,64px) 60px', width:'100%', boxSizing:'border-box' }}>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, margin:'0 0 32px' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, margin:'0 0 18px' }}>
         <h1 className="gradient-title" style={{ textAlign:'left', fontSize:'46px', margin:'0', fontWeight:600 }}>📊 Visión General</h1>
-        <div>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <select value={rangeKind} onChange={e=>setRangeKind(e.target.value as any)} style={{ padding:'10px 12px', border:'1px solid #ddd', borderRadius:8 }}>
+            <option value="hoy">Hoy</option>
+            <option value="7d">Últimos 7 días</option>
+            <option value="30d">Últimos 30 días</option>
+            <option value="mes">Mes en curso</option>
+            <option value="custom">Personalizado</option>
+          </select>
+          {rangeKind==='custom' && (
+            <div style={{ display:'flex', gap:8 }}>
+              <input type="date" value={customStart} onChange={e=>setCustomStart(e.target.value)} style={{ padding:'8px 10px', border:'1px solid #ddd', borderRadius:8 }} />
+              <input type="date" value={customEnd} onChange={e=>setCustomEnd(e.target.value)} style={{ padding:'8px 10px', border:'1px solid #ddd', borderRadius:8 }} />
+            </div>
+          )}
           {isUnlocked ? (
             <button onClick={handleHide} style={{ background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'10px 14px', cursor:'pointer' }}>Ocultar montos</button>
           ) : (
@@ -145,26 +296,193 @@ const Dashboard = () => {
           )}
         </div>
       </div>
-      <div className="lux-grid" style={{ gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', width:'100%' }}>
+
+      {/* KPIs */}
+      <div className="lux-grid" style={{ gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', width:'100%', marginBottom:18 }}>
         <div className="stat-card">
-          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ventas Hoy</h3>
-          <div className="stat-value">{isUnlocked ? `$${stats.salesToday.toLocaleString('es-MX', { minimumFractionDigits: 2 })}` : maskedMoney()}</div>
-          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>{stats.salesCount > 0 ? `${stats.salesCount} ventas totales` : 'Sin ventas hoy'}</small>
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ingresos</h3>
+          <div className="stat-value">{money(kpis.total)}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>{series.length} días en rango</small>
         </div>
         <div className="stat-card">
-          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Productos</h3>
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Transacciones</h3>
+          <div className="stat-value" style={{fontSize:'42px'}}>{kpis.count}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Ventas en el rango</small>
+        </div>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ticket Promedio</h3>
+          <div className="stat-value">{money(kpis.avg)}</div>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Promedio por venta</small>
+        </div>
+        <div className="stat-card">
+          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Inventario</h3>
           <div className="stat-value" style={{fontSize:'42px'}}>{stats.totalProducts}</div>
-          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Inventario total</small>
+          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Productos registrados</small>
         </div>
-        <div className="stat-card">
-          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Clientes</h3>
-          <div className="stat-value" style={{fontSize:'42px'}}>{stats.totalCustomers}</div>
-          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Registrados</small>
+      </div>
+
+      {/* Trend and Goal */}
+      <div style={{ display:'grid', gridTemplateColumns:'1.5fr 1fr', gap:16, marginBottom:18 }}>
+        <div className="stat-card" style={{ padding:16 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+            <strong>Ingresos diarios</strong>
+            <span style={{ color:'#6a6a6a', fontSize:12 }}>{series.length} días</span>
+          </div>
+          <svg viewBox={`0 0 300 80`} width="100%" height="80">
+            <polyline fill="none" stroke="#2f6fed" strokeWidth="2" points={series.map((p, i)=> {
+              const x = (300 * i) / Math.max(1, series.length-1);
+              const y = 80 - (p.total / maxY) * 70 - 5;
+              return `${x},${y}`;
+            }).join(' ')} />
+          </svg>
         </div>
-        <div className="stat-card">
-          <h3 style={{margin:'0 0 12px', fontSize:'15px', textTransform:'uppercase', letterSpacing:'1.5px', color:'#c7d0db'}}>Ventas Totales</h3>
-          <div className="stat-value" style={{fontSize:'42px'}}>{stats.salesCount}</div>
-          <small style={{ fontSize:'13px', color:'#9aa4b1' }}>Acumuladas</small>
+        <div className="stat-card" style={{ padding:16 }}>
+          {(() => {
+            const goalSetting = (settings||[]).find((s:any)=> s.key === 'monthly_goal');
+            const monthlyGoal = goalSetting ? parseFloat(goalSetting.value) : 100000;
+            const monthStart = startOfMonth(new Date());
+            const monthEnd = addDays(floorDate(new Date()), 1);
+            const monthSales = sales.filter((s:any)=> {
+              const d = new Date(s.createdAt);
+              return d>=monthStart && d<monthEnd;
+            });
+            const achieved = monthSales.reduce((sum:number, s:any)=> sum + (s.total||0), 0);
+            const pct = Math.min(100, Math.round((achieved / (monthlyGoal||1)) * 100));
+            return (
+              <div>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+                  <strong>Meta mensual</strong>
+                  <span style={{ color:'#6a6a6a' }}>{money(monthlyGoal)}</span>
+                </div>
+                <div style={{ height:12, background:'#eee', borderRadius:8, overflow:'hidden' }}>
+                  <div style={{ width:`${pct}%`, height:'100%', background:'#4caf50' }} />
+                </div>
+                <div style={{ marginTop:6, display:'flex', justifyContent:'space-between', fontSize:12, color:'#555' }}>
+                  <span>Avance</span>
+                  <span>{pct}% · {money(achieved)}</span>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* Breakdown + Top categorías */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:18 }}>
+        <div className="stat-card" style={{ padding:16 }}>
+          <strong>Métodos de pago</strong>
+          <div style={{ marginTop:10, display:'grid', gap:8 }}>
+            {Object.entries(kpis.byMethod).length===0 ? (
+              <div style={{ color:'#666', fontSize:13 }}>No hay ventas en el rango</div>
+            ) : (
+              Object.entries(kpis.byMethod).sort((a,b)=> b[1]-a[1]).map(([montoKey, val])=> {
+                const pct = kpis.total ? Math.round((val/kpis.total)*100) : 0;
+                return (
+                  <div key={montoKey} style={{ display:'grid', gridTemplateColumns:'120px 1fr auto', gap:8, alignItems:'center' }}>
+                    <span style={{ color:'#555' }}>{montoKey}</span>
+                    <div style={{ height:8, background:'#eee', borderRadius:6, overflow:'hidden' }}>
+                      <div style={{ width:`${pct}%`, height:'100%', background:'#2f6fed' }} />
+                    </div>
+                    <span style={{ fontSize:12, color:'#555' }}>{pct}% {isUnlocked ? `· ${toCurrency(val)}` : ''}</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+        <div className="stat-card" style={{ padding:16 }}>
+          <strong>Top categorías</strong>
+          <div style={{ marginTop:10, display:'grid', gap:8 }}>
+            {topCategorias.length===0 ? (
+              <div style={{ color:'#666', fontSize:13 }}>Sin datos</div>
+            ) : (
+              topCategorias.map(([cat, val])=> (
+                <div key={cat} style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8, alignItems:'center' }}>
+                  <span>{cat}</span>
+                  <span style={{ fontWeight:600 }}>{money(val)}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Inventario + Clientes */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:18 }}>
+        <div className="stat-card" style={{ padding:16 }}>
+          <strong>Stock bajo</strong>
+          <div style={{ marginTop:10, display:'grid', gap:6, maxHeight:200, overflow:'auto' }}>
+            {lowStock.length===0 ? (
+              <div style={{ color:'#666', fontSize:13 }}>Todo bien por ahora</div>
+            ) : lowStock.map(p=> (
+              <div key={p.id} style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center' }}>
+                <span style={{ color:'#333' }}>{p.name}</span>
+                <span style={{ fontSize:12, color:'#555' }}>{p.category}</span>
+                <span style={{ fontWeight:700, color: p.stock<5? '#d32f2f':'#f57c00' }}>{p.stock}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="stat-card" style={{ padding:16 }}>
+          <strong>Clientes</strong>
+          <div style={{ marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+            <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:8, padding:10 }}>
+              <div style={{ color:'#666', fontSize:12 }}>Nuevos</div>
+              <div style={{ fontSize:22, fontWeight:700 }}>{newVsReturning.nuevos}</div>
+            </div>
+            <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:8, padding:10 }}>
+              <div style={{ color:'#666', fontSize:12 }}>Recurrentes</div>
+              <div style={{ fontSize:22, fontWeight:700 }}>{newVsReturning.recurrentes}</div>
+            </div>
+          </div>
+          <div style={{ marginTop:10 }}>
+            <div style={{ fontWeight:600, marginBottom:6 }}>Top clientes</div>
+            {topClientes.length===0 ? (
+              <div style={{ color:'#666', fontSize:13 }}>Sin datos</div>
+            ) : (
+              <div style={{ display:'grid', gap:6 }}>
+                {topClientes.map((t)=> (
+                  <div key={t.customer.id} style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
+                    <span>{t.customer.name}</span>
+                    <span style={{ fontWeight:700 }}>{money(t.total)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Ventas recientes + Caja */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+        <div className="stat-card" style={{ padding:16 }}>
+          <strong>Ventas recientes</strong>
+          <div style={{ marginTop:10, maxHeight:220, overflow:'auto', display:'grid', gap:8 }}>
+            {[...sales].sort((a:any,b:any)=> new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime()).slice(0,10).map((s:any)=> (
+              <div key={s.id} style={{ display:'grid', gridTemplateColumns:'auto 1fr auto', gap:8, alignItems:'center' }}>
+                <span style={{ fontSize:12, color:'#666' }}>{new Date(s.createdAt).toLocaleString('es-MX')}</span>
+                <span style={{ color:'#555' }}>{s.paymentMethod||'Otro'}</span>
+                <span style={{ fontWeight:700 }}>{money(s.total||0)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="stat-card" style={{ padding:16 }}>
+          <strong>Caja</strong>
+          {openSession ? (
+            <div style={{ marginTop:10 }}>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
+                <span>Sesión abierta desde</span>
+                <span>{new Date(openSession.startTime).toLocaleString('es-MX')}</span>
+              </div>
+              <div style={{ marginTop:8, display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
+                <span>Inicial</span>
+                <span style={{ fontWeight:700 }}>{money(openSession.initialAmount||0)}</span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop:8, color:'#666', fontSize:13 }}>No hay sesión de caja abierta</div>
+          )}
         </div>
       </div>
 
@@ -192,372 +510,257 @@ const Dashboard = () => {
 };
 
 const Sales = () => {
-  const [cart, setCart] = useState<any[]>([]);
+  type OrderItem = {
+    id: number;
+    type: 'product' | 'manual';
+    productId?: number;
+    name: string;
+    category?: string;
+    unitPrice: number;
+    quantity: number;
+    notes?: string;
+  };
+
   const [products, setProducts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [recentSales, setRecentSales] = useState<any[]>([]);
+
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  // Nueva Venta MVP (rápida)
+  const [customerQuery, setCustomerQuery] = useState('');
+
+  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<'Efectivo'|'Tarjeta'|'Transferencia'>('Efectivo');
+
   const [quickSale, setQuickSale] = useState({
     fecha: new Date().toISOString().split('T')[0],
     categoria: 'Anillos',
     cantidad: 1,
-    customerId: '',
     precioUnitario: 0,
-    metodoPago: 'Efectivo' as 'Efectivo' | 'Tarjeta' | 'Transferencia',
     notas: ''
   });
-  const [customerQuery, setCustomerQuery] = useState('');
-  const [pendingSalesCart, setPendingSalesCart] = useState<any[]>([]);
-  const [recentSales, setRecentSales] = useState<any[]>([]);
+
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Configuración de descuentos/IVA (sin dependencias nuevas)
+  const [discountMap, setDiscountMap] = useState<{[k:string]: number}>({ Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 });
+  const [taxRate, setTaxRate] = useState(0.16);
 
   useEffect(() => {
     loadData();
+    try {
+      const dl = localStorage.getItem('discountLevels');
+      if (dl) {
+        const parsed = JSON.parse(dl);
+        setDiscountMap({
+          Bronze: (parsed.Bronze ?? 0) / 100,
+          Silver: (parsed.Silver ?? 5) / 100,
+          Gold: (parsed.Gold ?? 8) / 100,
+          Platinum: (parsed.Platinum ?? 12) / 100
+        });
+      }
+    } catch {}
+    try {
+      const bs = localStorage.getItem('businessSettings');
+      if (bs) {
+        const parsed = JSON.parse(bs);
+        if (typeof parsed.taxRate === 'number') setTaxRate((parsed.taxRate || 16) / 100);
+      }
+    } catch {}
+    if (window.electronAPI?.getSettings) {
+      window.electronAPI.getSettings().then((rows:any[]) => {
+        const tax = rows?.find(r => r.key === 'tax_rate');
+        if (tax && !Number.isNaN(parseFloat(tax.value))) {
+          setTaxRate(parseFloat(tax.value)); // ya como 0.16
+        }
+      }).catch(()=>{});
+    }
   }, []);
 
   const loadData = async () => {
     try {
-      if (window.electronAPI) {
-        const [productsData, customersData, salesData] = await Promise.all([
-          window.electronAPI.getProducts(),
-          window.electronAPI.getCustomers(),
-          window.electronAPI.getSales()
-        ]);
-        setProducts(productsData);
-        setCustomers(customersData);
-        setRecentSales([...salesData].sort((a:any,b:any)=> new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0,10));
-      }
-    } catch (error) {
-      console.error('Error loading data:', error);
+      if (!window.electronAPI) return;
+      const [productsData, customersData, salesData] = await Promise.all([
+        window.electronAPI.getProducts(),
+        window.electronAPI.getCustomers(),
+        window.electronAPI.getSales()
+      ]);
+      setProducts(productsData);
+      setCustomers(customersData);
+      setRecentSales([...salesData].sort((a:any,b:any)=> new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0,10));
+    } catch (e) {
+      console.error('Error loading sales data:', e);
     }
   };
 
-  const addToCart = (product: any) => {
-    const existingItem = cart.find(item => item.id === product.id);
-    if (existingItem) {
-      setCart(cart.map(item => 
-        item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
-      ));
-    } else {
-      setCart([...cart, { ...product, quantity: 1 }]);
-    }
+  // Productos → agregar al pedido
+  const addProductToOrder = (product:any) => {
+    if (product.stock <= 0) return;
+    setOrderItems(prev => {
+      const found = prev.find(i => i.type==='product' && i.productId===product.id);
+      if (found) return prev.map(i => i===found ? { ...i, quantity: i.quantity + 1 } : i);
+      return [...prev, {
+        id: Date.now()+Math.floor(Math.random()*1000),
+        type: 'product',
+        productId: product.id,
+        name: product.name,
+        category: product.category,
+        unitPrice: product.price,
+        quantity: 1
+      }];
+    });
   };
 
-  const removeFromCart = (productId: number) => {
-    setCart(cart.filter(item => item.id !== productId));
-  };
-
-  const updateQuantity = (productId: number, quantity: number) => {
-    if (quantity <= 0) {
-      removeFromCart(productId);
-    } else {
-      setCart(cart.map(item => 
-        item.id === productId ? { ...item, quantity } : item
-      ));
-    }
-  };
-
-  const calculateSubtotal = () => {
-    return cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  };
-
-  const calculateDiscount = () => {
-    if (!selectedCustomer) return 0;
-    const subtotal = calculateSubtotal();
-    const discountRates = {
-      Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12
-    };
-    return subtotal * (discountRates[selectedCustomer.discountLevel as keyof typeof discountRates] || 0);
-  };
-
-  const calculateTax = () => {
-    const subtotalAfterDiscount = calculateSubtotal() - calculateDiscount();
-    return subtotalAfterDiscount * 0.16;
-  };
-
-  const calculateTotal = () => {
-    return calculateSubtotal() - calculateDiscount() + calculateTax();
-  };
-
-  const processSale = async (paymentMethod: string) => {
-    if (cart.length === 0) return;
-
-    try {
-      const saleData = {
-        customerId: selectedCustomer?.id,
-        subtotal: calculateSubtotal(),
-        discount: calculateDiscount(),
-        tax: calculateTax(),
-        total: calculateTotal(),
-        paymentMethod,
-        items: cart.map(item => ({
-          productId: item.id,
-          quantity: item.quantity,
-          unitPrice: item.price,
-          subtotal: item.price * item.quantity
-        }))
-      };
-
-      if (window.electronAPI) {
-        await window.electronAPI.createSale(saleData);
-        setCart([]);
-        setSelectedCustomer(null);
-        alert('Venta procesada exitosamente');
-        loadData(); // Recargar datos para actualizar stock y recientes
-      }
-    } catch (error) {
-      console.error('Error processing sale:', error);
-      alert('Error al procesar la venta');
-    }
-  };
-
-  const quickTotals = () => {
-    const qty = Math.max(0, Math.floor(quickSale.cantidad));
-    const unit = Math.max(0, Number(quickSale.precioUnitario));
-    const subtotal = qty * unit;
-    const customer = customers.find((c:any)=> String(c.id) === String(quickSale.customerId));
-    const rateMap: Record<string, number> = { Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 };
-    const lvl = customer?.discountLevel || 'Bronze';
-    const discount = +(subtotal * (rateMap[lvl] ?? 0)).toFixed(2);
-    const total = +(subtotal - discount).toFixed(2);
-    return { subtotal, discount, total, rate: (rateMap[lvl] ?? 0) };
-  };
-
-  const submitQuickSale = async (e: React.FormEvent) => {
+  // Venta rápida → agrega línea manual
+  const submitQuickSale = (e: React.FormEvent) => {
     e.preventDefault();
-    // Validar y agregar al carrito de ventas pendientes
-    if (quickSale.cantidad <= 0 || quickSale.precioUnitario <= 0) {
+    if (quickSale.cantidad < 1 || quickSale.precioUnitario <= 0) {
       alert('Cantidad y precio deben ser mayores a 0');
       return;
     }
-  const t = quickTotals();
-    const customer = customers.find((c:any)=> String(c.id) === String(quickSale.customerId));
-    setPendingSalesCart(prev => ([
+    setOrderItems(prev => ([
       ...prev,
       {
         id: Date.now(),
-        fecha: quickSale.fecha,
-        categoria: quickSale.categoria,
-        cantidad: quickSale.cantidad,
-        precioUnitario: quickSale.precioUnitario,
-    subtotal: t.subtotal,
-    discount: t.discount,
-    total: t.total,
-        metodoPago: quickSale.metodoPago,
-        customerId: customer?.id || null,
-        customerName: customer ? customer.name : 'Cliente general',
-        notas: quickSale.notas
+        type: 'manual',
+        name: `Venta rápida · ${quickSale.categoria}`,
+        category: quickSale.categoria,
+        unitPrice: Number(quickSale.precioUnitario) || 0,
+        quantity: Math.floor(quickSale.cantidad) || 1,
+        notes: quickSale.notas?.trim() || ''
       }
     ]));
-    // Reset parcial
-    setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: quickSale.categoria, cantidad: 1, customerId: quickSale.customerId, precioUnitario: 0, metodoPago: quickSale.metodoPago, notas: '' });
+    setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: quickSale.categoria, cantidad: 1, precioUnitario: 0, notas: '' });
   };
 
-  const confirmPendingSales = async () => {
-    if (pendingSalesCart.length === 0) return;
+  // Edición de líneas
+  const removeItem = (id:number) => setOrderItems(prev => prev.filter(i => i.id !== id));
+  const updateQty = (id:number, qty:number) => setOrderItems(prev => prev.map(i => i.id===id ? { ...i, quantity: Math.max(1, Math.floor(qty)||1) } : i));
+  const updatePriceManual = (id:number, price:number) => setOrderItems(prev => prev.map(i => i.id===id ? { ...i, unitPrice: Math.max(0, Number(price)||0) } : i));
+
+  // Cliente filtrado
+  const filteredCustomers = customers.filter((c:any) => {
+    const raw = customerQuery.trim();
+    if (!raw) return true;
+    const q = raw.toLowerCase();
+    const qDigits = raw.replace(/\D+/g,'');
+    const idMatch = String(c.id).includes(raw);
+    const nameMatch = (c.name||'').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q);
+    const phones = [c.phone, c.alternatePhone].filter(Boolean) as string[];
+    const phoneMatch = qDigits.length>0 && phones.some(p => p.replace(/\D+/g,'').includes(qDigits));
+    return idMatch || nameMatch || phoneMatch;
+  }).slice(0, 50);
+
+  // Totales
+  const subtotal = orderItems.reduce((s,i)=> s + i.unitPrice * i.quantity, 0);
+  const discountRate = selectedCustomer ? (discountMap[selectedCustomer.discountLevel] || 0) : 0;
+  const discount = +(subtotal * discountRate).toFixed(2);
+  const tax = +(((subtotal - discount) * taxRate)).toFixed(2);
+  const total = +(subtotal - discount + tax).toFixed(2);
+
+  const confirmOrder = async () => {
+    if (orderItems.length === 0) return;
     try {
-      for (const line of pendingSalesCart) {
-        const saleData = {
-          customerId: line.customerId || undefined,
-          subtotal: line.subtotal,
-          discount: line.discount || 0,
-          tax: 0,
-          total: line.total,
-          paymentMethod: line.metodoPago,
-          items: [{ productId: 0, quantity: line.cantidad, unitPrice: line.precioUnitario, subtotal: line.subtotal }],
-          notes: `Categoría: ${line.categoria}${line.notas ? ' | ' + line.notas : ''}`,
-          createdAt: new Date(line.fecha).toISOString()
-        } as any;
-        if (window.electronAPI) {
-          await window.electronAPI.createSale(saleData);
-        }
-      }
-      setPendingSalesCart([]);
+      const items = orderItems.map(i => ({
+        productId: i.type==='product' ? (i.productId||0) : 0,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        subtotal: +(i.unitPrice * i.quantity).toFixed(2)
+      }));
+      const manualNotes = orderItems.filter(i=> i.type==='manual').map(i=> `Categoría: ${i.category}${i.notes ? ' | '+i.notes : ''}`);
+      const saleData = {
+        customerId: selectedCustomer?.id || undefined,
+        paymentMethod,
+        subtotal,
+        discount,
+        tax,
+        total,
+        items,
+        notes: manualNotes.join(' || ') || undefined,
+        createdAt: new Date().toISOString()
+      } as any;
+      await window.electronAPI.createSale(saleData);
+      setOrderItems([]);
+      setSelectedCustomer(null);
+      setCustomerQuery('');
       loadData();
       alert('Compra confirmada y guardada');
-    } catch (err) {
-      console.error(err);
+    } catch (e) {
+      console.error('Error al confirmar compra:', e);
       alert('Error al confirmar la compra');
     }
   };
+  const cancelOrder = () => setOrderItems([]);
 
-  const cancelPendingSales = () => setPendingSalesCart([]);
-  const removePendingLine = (id:number) => setPendingSalesCart(prev => prev.filter(x=>x.id!==id));
-
-  const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.sku.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredProducts = products.filter((p:any) =>
+    (p.name||'').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.sku||'').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-  <div style={{ padding: '30px', display: 'grid', gridTemplateColumns: '1fr 420px', gap: '30px', background: 'transparent', minHeight: '100vh' }}>
-      {/* Panel de productos */}
-      <div style={{ background: 'white', borderRadius: '15px', padding: '25px', boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}>
-        <h1 style={{ 
-          color: '#1a202c', 
-          fontSize: '2.2rem', 
-          fontWeight: '700',
-          marginBottom: '25px',
-          textAlign: 'center',
-          borderBottom: '3px solid #4299e1',
-          paddingBottom: '15px'
-        }}>
-          🛒 Sistema de Ventas
+    <div style={{ padding:'30px', display:'grid', gridTemplateColumns:'1fr 420px', gap:'30px', minHeight:'100vh' }}>
+      {/* Izquierda: catálogo + venta rápida */}
+      <div style={{ background:'#fff', borderRadius:15, padding:25, boxShadow:'0 8px 30px rgba(0,0,0,0.08)' }}>
+        <h1 style={{ color:'#1a202c', fontSize:'2.0rem', fontWeight:700, margin:'0 0 18px', textAlign:'center', borderBottom:'3px solid #4299e1', paddingBottom:12 }}>
+          🛒 Ventas
         </h1>
-        
-        <div style={{ marginBottom: '25px' }}>
-          <input
-            type="text"
-            placeholder="🔍 Buscar productos por nombre o SKU..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ 
-              width: '100%', 
-              padding: '15px 20px', 
-              border: '2px solid #e2e8f0', 
-              borderRadius: '12px', 
-              fontSize: '16px',
-              background: '#f7fafc',
-              color: '#2d3748',
-              transition: 'all 0.3s ease'
-            }}
-            onFocus={(e) => {
-              e.target.style.borderColor = '#4299e1';
-              e.target.style.boxShadow = '0 0 0 3px rgba(66, 153, 225, 0.1)';
-              e.target.style.background = 'white';
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = '#e2e8f0';
-              e.target.style.boxShadow = 'none';
-              e.target.style.background = '#f7fafc';
-            }}
-          />
+        <div style={{ marginBottom:18 }}>
+          <input type="text" placeholder="🔍 Buscar productos por nombre o SKU…" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}
+            style={{ width:'100%', padding:'14px 16px', border:'2px solid #e2e8f0', borderRadius:12, background:'#f7fafc' }} />
         </div>
-
-        {/* Nueva Venta (rápida) */}
-        <div style={{ marginBottom: 24, padding: 16, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fafafa' }}>
-          <h3 style={{ marginTop: 0 }}>Nueva Venta</h3>
-          <form onSubmit={submitQuickSale} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12 }}>
+        {/* Venta rápida */}
+        <div style={{ marginBottom: 18, padding: 14, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fafafa' }}>
+          <h3 style={{ margin: 0 }}>Nueva Venta</h3>
+          <form onSubmit={submitQuickSale} style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, marginTop:10 }}>
             <div>
-              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Fecha</label>
-              <input type="date" value={quickSale.fecha} onChange={e=>setQuickSale({...quickSale, fecha: e.target.value})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+              <label style={{ display:'block', fontSize:12, color:'#666' }}>Fecha</label>
+              <input type="date" value={quickSale.fecha} onChange={e=>setQuickSale({...quickSale, fecha:e.target.value})}
+                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Categoría</label>
-              <select value={quickSale.categoria} onChange={e=>setQuickSale({...quickSale, categoria: e.target.value})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}>
-                <option>Anillos</option>
-                <option>Collares</option>
-                <option>Aretes</option>
-                <option>Pulseras</option>
-                <option>Relojes</option>
-                <option>Otros</option>
+              <label style={{ display:'block', fontSize:12, color:'#666' }}>Categoría</label>
+              <select value={quickSale.categoria} onChange={e=>setQuickSale({...quickSale, categoria:e.target.value})}
+                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}>
+                <option>Anillos</option><option>Collares</option><option>Aretes</option>
+                <option>Pulseras</option><option>Relojes</option><option>Otros</option>
               </select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Cliente</label>
-              <input type="text" value={customerQuery} onChange={e=>setCustomerQuery(e.target.value)} placeholder="Buscar por nombre, ID o teléfono" style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6, marginBottom: 6 }} />
-              <select value={quickSale.customerId} onChange={e=>setQuickSale({...quickSale, customerId: e.target.value})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}>
-                <option value="">Cliente general</option>
-                {customers.filter((c:any)=> {
-                  const raw = customerQuery.trim();
-                  const q = raw.toLowerCase();
-                  const qDigits = raw.replace(/\D+/g, '');
-                  if (!q && !qDigits) return true;
-                  const nameMatch = (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q);
-                  const idMatch = String(c.id).includes(raw);
-                  const phones = [c.phone, c.alternatePhone].filter(Boolean) as string[];
-                  const phoneMatch = qDigits.length > 0 && phones.some(p => p.replace(/\D+/g, '').includes(qDigits));
-                  return idMatch || nameMatch || phoneMatch;
-                }).map((c:any)=> (
-                  <option key={c.id} value={c.id}>{c.id} - {c.name}</option>
-                ))}
-              </select>
+              <label style={{ display:'block', fontSize:12, color:'#666' }}>Cantidad</label>
+              <input type="number" min={1} value={quickSale.cantidad}
+                onChange={e=>setQuickSale({...quickSale, cantidad: Math.max(1, parseInt(e.target.value)||1)})}
+                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Cantidad</label>
-              <input type="number" min={1} value={quickSale.cantidad} onChange={e=>setQuickSale({...quickSale, cantidad: parseInt(e.target.value)||0})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+              <label style={{ display:'block', fontSize:12, color:'#666' }}>Precio Unitario</label>
+              <input type="number" min={0} step="0.01" value={quickSale.precioUnitario}
+                onChange={e=>setQuickSale({...quickSale, precioUnitario: Math.max(0, parseFloat(e.target.value)||0)})}
+                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }} />
             </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Precio Unitario</label>
-              <input type="number" min={0} step="0.01" value={quickSale.precioUnitario} onChange={e=>setQuickSale({...quickSale, precioUnitario: parseFloat(e.target.value)||0})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+            <div style={{ gridColumn:'1/-1' }}>
+              <label style={{ display:'block', fontSize:12, color:'#666' }}>Notas</label>
+              <input type="text" value={quickSale.notas} onChange={e=>setQuickSale({...quickSale, notas:e.target.value})}
+                placeholder="Opcional" style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }} />
             </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Método de Pago</label>
-              <select value={quickSale.metodoPago} onChange={e=>setQuickSale({...quickSale, metodoPago: e.target.value as any})} style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}>
-                <option value="Efectivo">Efectivo</option>
-                <option value="Tarjeta">Tarjeta</option>
-                <option value="Transferencia">Transferencia</option>
-              </select>
-            </div>
-            <div style={{ gridColumn: '1/-1' }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Notas</label>
-              <input type="text" value={quickSale.notas} onChange={e=>setQuickSale({...quickSale, notas: e.target.value})} placeholder="Opcional" style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
-            </div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <button type="submit" style={{ background: '#2196f3', color: 'white', border: 'none', borderRadius: 6, padding: '10px 14px', cursor: 'pointer' }}>Guardar en ventas</button>
-              <button type="button" onClick={()=>setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: 'Anillos', cantidad: 1, customerId: '', precioUnitario: 0, metodoPago: 'Efectivo', notas: '' })} style={{ background: 'white', color: '#333', border: '1px solid #ddd', borderRadius: 6, padding: '10px 14px', cursor: 'pointer' }}>Cancelar</button>
-              {(() => { const t = quickTotals(); return (
-                <div style={{ fontSize: 14, color: '#333' }}>
-                  Total: <strong>${t.total.toFixed(2)}</strong>
-                </div>
-              ); })()}
+            <div style={{ display:'flex', gap:12, alignItems:'center' }}>
+              <button type="submit" style={{ background:'#2196f3', color:'#fff', border:'none', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Agregar al pedido</button>
+              <button type="button" onClick={()=>setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: 'Anillos', cantidad: 1, precioUnitario: 0, notas: '' })}
+                style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Limpiar</button>
             </div>
           </form>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-          {filteredProducts.map((product) => (
-            <div key={product.id} style={{ 
-              border: '2px solid #e2e8f0', 
-              borderRadius: '15px', 
-              padding: '20px', 
-              background: product.stock > 0 ? 'white' : '#f7fafc',
-              cursor: product.stock > 0 ? 'pointer' : 'not-allowed',
-              transition: 'all 0.3s ease',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.05)'
-            }}
-            onClick={() => product.stock > 0 && addToCart(product)}
-            onMouseOver={(e) => {
-              if (product.stock > 0) {
-                e.currentTarget.style.transform = 'translateY(-5px)';
-                e.currentTarget.style.boxShadow = '0 8px 25px rgba(0,0,0,0.1)';
-                e.currentTarget.style.borderColor = '#4299e1';
-              }
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 4px 15px rgba(0,0,0,0.05)';
-              e.currentTarget.style.borderColor = '#e2e8f0';
-            }}>
-              <h4 style={{ margin: '0 0 12px 0', color: product.stock > 0 ? '#1a202c' : '#a0aec0', fontSize: '1.1rem', fontWeight: '600' }}>
-                {product.name}
-              </h4>
-              <p style={{ margin: '8px 0', color: '#718096', fontSize: '14px', fontFamily: 'monospace', background: '#f7fafc', padding: '4px 8px', borderRadius: '6px', display: 'inline-block' }}>
-                SKU: {product.sku}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:'20px' }}>
+          {filteredProducts.map((product:any) => (
+            <div key={product.id} style={{ border:'2px solid #e2e8f0', borderRadius:15, padding:20, background: product.stock>0? '#fff':'#f7fafc', cursor: product.stock>0 ? 'pointer':'not-allowed', transition:'all .3s', boxShadow:'0 4px 15px rgba(0,0,0,0.05)'}}
+              onClick={() => addProductToOrder(product)}
+              onMouseOver={(e) => { if (product.stock>0) { e.currentTarget.style.transform='translateY(-5px)'; e.currentTarget.style.boxShadow='0 8px 25px rgba(0,0,0,0.1)'; e.currentTarget.style.borderColor='#4299e1'; } }}
+              onMouseOut={(e) => { e.currentTarget.style.transform='translateY(0)'; e.currentTarget.style.boxShadow='0 4px 15px rgba(0,0,0,0.05)'; e.currentTarget.style.borderColor='#e2e8f0'; }}>
+              <h4 style={{ margin:'0 0 12px', color: product.stock>0? '#1a202c':'#a0aec0', fontSize:'1.1rem', fontWeight:600 }}>{product.name}</h4>
+              <p style={{ margin:'8px 0', color:'#718096', fontSize:14, fontFamily:'monospace', background:'#f7fafc', padding:'4px 8px', borderRadius:6, display:'inline-block' }}>SKU: {product.sku}</p>
+              <p style={{ margin:'12px 0', fontSize:24, fontWeight:'bold', color:'#2b6cb0' }}>${product.price.toFixed(2)}</p>
+              <p style={{ margin:'8px 0', fontSize:14, color: product.stock<10? '#e53e3e':'#4a5568', fontWeight: product.stock<10? 'bold':'normal' }}>
+                Stock: {product.stock}{product.stock < 10 && product.stock > 0 && ' ⚠️ (Bajo)'}{product.stock === 0 && ' ❌ (Agotado)'}
               </p>
-              <p style={{ margin: '12px 0', fontSize: '24px', fontWeight: 'bold', color: '#2b6cb0' }}>
-                ${product.price.toFixed(2)}
-              </p>
-              <p style={{ 
-                margin: '8px 0', 
-                fontSize: '14px', 
-                color: product.stock < 10 ? '#e53e3e' : '#4a5568',
-                fontWeight: product.stock < 10 ? 'bold' : 'normal'
-              }}>
-                Stock: {product.stock}
-                {product.stock < 10 && product.stock > 0 && ' ⚠️ (Bajo)'}
-                {product.stock === 0 && ' ❌ (Agotado)'}
-              </p>
-              <div style={{ 
-                marginTop: '15px', 
-                fontSize: '12px', 
-                color: 'white',
-                background: 'linear-gradient(135deg, #4299e1, #3182ce)',
-                padding: '6px 12px',
-                borderRadius: '20px',
-                textAlign: 'center',
-                fontWeight: '500'
-              }}>
+              <div style={{ marginTop:15, fontSize:12, color:'#fff', background:'linear-gradient(135deg, #4299e1, #3182ce)', padding:'6px 12px', borderRadius:20, textAlign:'center', fontWeight:500 }}>
                 {product.category}
               </div>
             </div>
@@ -565,60 +768,84 @@ const Sales = () => {
         </div>
       </div>
 
-      {/* Panel de carrito */}
-      <div style={{ 
-        background: 'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)', 
-        padding: '25px', 
-        borderRadius: '15px', 
-        height: 'fit-content',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.1)',
-        border: '1px solid #e2e8f0'
-      }}>
-        <h2 style={{ 
-          marginTop: 0, 
-          color: '#1a202c', 
-          fontSize: '1.8rem',
-          textAlign: 'center',
-          borderBottom: '2px solid #4299e1',
-          paddingBottom: '15px',
-          marginBottom: '25px'
-        }}>
-          🛍️ Carrito de Compras
-        </h2>
-        {/* Ventas en carrito (pendientes) */}
-        <div style={{ marginBottom: 16, padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff' }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8 }}>
-            <strong>Ventas en carrito</strong>
-            <div style={{ display:'flex', gap: 8 }}>
-              <button onClick={confirmPendingSales} disabled={pendingSalesCart.length===0} style={{ background:'#4caf50', color:'#fff', border:'none', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Confirmar compra</button>
-              <button onClick={cancelPendingSales} disabled={pendingSalesCart.length===0} style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'6px 10px', cursor:'pointer' }}>Cancelar</button>
-            </div>
-          </div>
-          {pendingSalesCart.length===0 ? (
-            <div style={{ color:'#666', fontSize:13 }}>No hay ventas pendientes</div>
-          ) : (
-            <div style={{ display:'grid', gap:8, maxHeight:200, overflow:'auto' }}>
-              {pendingSalesCart.map(line => (
-                <div key={line.id} style={{ border:'1px solid #eee', borderRadius:6, padding:8 }}>
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
-                    <div>
-                      <div style={{ fontWeight:600 }}>{line.customerName}</div>
-                      <div style={{ fontSize:12, color:'#555' }}>{new Date(line.fecha).toLocaleDateString('es-MX')} · {line.metodoPago}</div>
-                      <div style={{ fontSize:13 }}>Categoría: <strong>{line.categoria}</strong> · Cant: <strong>{line.cantidad}</strong> · PU: <strong>${Number(line.precioUnitario).toFixed(2)}</strong></div>
-                    </div>
-                    <div style={{ textAlign:'right' }}>
-                      <div style={{ fontWeight:700 }}>${Number(line.total).toFixed(2)}</div>
-                      <button onClick={()=>removePendingLine(line.id)} style={{ marginTop:6, background:'#fff', color:'#d32f2f', border:'1px solid #d32f2f', borderRadius:6, padding:'4px 8px', cursor:'pointer' }}>Eliminar</button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+      {/* Derecha: pedido y acciones */}
+      <div style={{ background:'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)', padding:25, borderRadius:15, height:'fit-content', boxShadow:'0 8px 30px rgba(0,0,0,0.1)', border:'1px solid #e2e8f0' }}>
+        <h2 style={{ marginTop:0, color:'#1a202c', fontSize:'1.8rem', textAlign:'center', borderBottom:'2px solid #4299e1', paddingBottom:15, marginBottom:20 }}>🧾 Pedido</h2>
+
+        {/* Cliente */}
+        <div style={{ marginBottom:16, padding:14, background:'#f8f9fc', borderRadius:12, border:'2px solid #e2e8f0' }}>
+          <label style={{ display:'block', marginBottom:8, fontWeight:600, color:'#2d3748' }}>👤 Cliente</label>
+          <input type="text" value={customerQuery} onChange={e=>setCustomerQuery(e.target.value)} placeholder="Buscar por nombre, ID o teléfono"
+            style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8, marginBottom:6 }} />
+          <select value={selectedCustomer?.id || ''} onChange={e=> setSelectedCustomer(customers.find(c=> c.id === Number(e.target.value)) || null)}
+            style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8 }}>
+            <option value="">Cliente general</option>
+            {filteredCustomers.map((c:any)=> (
+              <option key={c.id} value={c.id}>{c.id} - {c.name} ({c.discountLevel})</option>
+            ))}
+          </select>
+          {selectedCustomer && (
+            <div style={{ marginTop:8, padding:'10px 12px', background:'linear-gradient(135deg, #4299e1, #3182ce)', borderRadius:8, color:'#fff', fontSize:13, textAlign:'center' }}>
+              <strong>Nivel: {selectedCustomer.discountLevel}</strong> · Descuento: {Math.round((discountMap[selectedCustomer.discountLevel]||0)*100)}%
             </div>
           )}
         </div>
 
+        {/* Items del pedido */}
+        <div style={{ marginBottom:16, maxHeight:260, overflowY:'auto' }}>
+          {orderItems.length === 0 ? (
+            <div style={{ textAlign:'center', color:'#666', padding:20 }}>No hay productos en el pedido</div>
+          ) : (
+            orderItems.map(it => (
+              <div key={it.id} style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:10, padding:10, marginBottom:8, background:'#fff', border:'1px solid #eee', borderRadius:8 }}>
+                <div>
+                  <div style={{ fontWeight:600, fontSize:14 }}>{it.name}</div>
+                  <div style={{ fontSize:12, color:'#666' }}>{it.category || 'Sin categoría'} {it.type==='manual' && '· Manual'}</div>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
+                    <button onClick={()=>updateQty(it.id, it.quantity-1)} style={{ width:24, height:24, border:'1px solid #ddd', background:'#fff', cursor:'pointer' }}>-</button>
+                    <span style={{ minWidth:20, textAlign:'center' }}>{it.quantity}</span>
+                    <button onClick={()=>updateQty(it.id, it.quantity+1)} style={{ width:24, height:24, border:'1px solid #ddd', background:'#fff', cursor:'pointer' }}>+</button>
+                    {it.type==='manual' ? (
+                      <input type="number" min={0} step="0.01" value={it.unitPrice} onChange={e=>updatePriceManual(it.id, parseFloat(e.target.value)||0)}
+                        style={{ marginLeft:8, width:100, padding:'4px 6px', border:'1px solid #ddd', borderRadius:6 }} />
+                    ) : (
+                      <span style={{ marginLeft:8, fontSize:12, color:'#666' }}>${it.unitPrice.toFixed(2)} c/u</span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ textAlign:'right' }}>
+                  <div style={{ fontWeight:700 }}>${(it.unitPrice*it.quantity).toFixed(2)}</div>
+                  <button onClick={()=>removeItem(it.id)} style={{ marginTop:6, background:'#fff', color:'#d32f2f', border:'1px solid #d32f2f', borderRadius:6, padding:'4px 8px', cursor:'pointer' }}>Eliminar</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Resumen y pago */}
+        <div style={{ borderTop:'1px solid #ddd', paddingTop:12, marginBottom:12 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}><span>Subtotal</span><span>${subtotal.toFixed(2)}</span></div>
+          {discount>0 && <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6, color:'#d32f2f' }}><span>Descuento</span><span>- ${discount.toFixed(2)}</span></div>}
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}><span>IVA ({Math.round(taxRate*100)}%)</span><span>${tax.toFixed(2)}</span></div>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:18, fontWeight:700, borderTop:'1px solid #ddd', paddingTop:8 }}><span>Total</span><span>${total.toFixed(2)}</span></div>
+        </div>
+
+        <div style={{ marginBottom:12 }}>
+          <label style={{ display:'block', fontSize:12, color:'#666', marginBottom:6 }}>Método de pago</label>
+          <select value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value as any)} style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8 }}>
+            <option value="Efectivo">Efectivo</option>
+            <option value="Tarjeta">Tarjeta</option>
+            <option value="Transferencia">Transferencia</option>
+          </select>
+        </div>
+
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={confirmOrder} disabled={orderItems.length===0} style={{ flex:1, background:'#4caf50', color:'#fff', border:'none', borderRadius:6, padding:'10px 12px', cursor:'pointer', fontWeight:700 }}>Confirmar compra</button>
+          <button onClick={cancelOrder} disabled={orderItems.length===0} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor:'pointer' }}>Cancelar</button>
+        </div>
+
         {/* Ventas recientes */}
-        <div style={{ marginBottom: 20, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
+        <div style={{ marginTop:16, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
           <div style={{ maxHeight: 180, overflow: 'auto' }}>
             {recentSales.length === 0 ? (
@@ -633,176 +860,11 @@ const Sales = () => {
             )}
           </div>
         </div>
-        
-        {/* Selección de cliente */}
-        <div style={{ marginBottom: '25px', padding: '20px', background: '#f8f9fc', borderRadius: '12px', border: '2px solid #e2e8f0' }}>
-          <label style={{ display: 'block', marginBottom: '10px', fontWeight: 'bold', color: '#2d3748', fontSize: '1.1rem' }}>
-            👤 Cliente:
-          </label>
-          <select 
-            value={selectedCustomer?.id || ''}
-            onChange={(e) => {
-              const customer = customers.find(c => c.id === parseInt(e.target.value));
-              setSelectedCustomer(customer || null);
-            }}
-            style={{ 
-              width: '100%', 
-              padding: '12px 15px', 
-              border: '2px solid #e2e8f0', 
-              borderRadius: '8px',
-              fontSize: '16px',
-              background: 'white',
-              color: '#2d3748',
-              cursor: 'pointer'
-            }}
-          >
-            <option value="">Cliente general</option>
-            {customers.map(customer => (
-              <option key={customer.id} value={customer.id}>
-                {customer.name} ({customer.discountLevel})
-              </option>
-            ))}
-          </select>
-          {selectedCustomer && (
-            <div style={{ 
-              marginTop: '10px', 
-              padding: '12px', 
-              background: 'linear-gradient(135deg, #4299e1, #3182ce)', 
-              borderRadius: '8px',
-              color: 'white',
-              fontSize: '14px',
-              textAlign: 'center'
-            }}>
-              <strong>Nivel: {selectedCustomer.discountLevel}</strong> - 
-              <span style={{ marginLeft: '8px' }}>
-                Descuento: {
-                  ({ Bronze: '0%', Silver: '5%', Gold: '8%', Platinum: '12%' } as any)[selectedCustomer.discountLevel]
-                }
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Items del carrito */}
-        <div style={{ marginBottom: '20px', maxHeight: '300px', overflowY: 'auto' }}>
-          {cart.length === 0 ? (
-            <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
-              El carrito está vacío
-            </p>
-          ) : (
-            cart.map(item => (
-              <div key={item.id} style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center',
-                padding: '10px', 
-                marginBottom: '8px',
-                background: 'white', 
-                borderRadius: '4px',
-                border: '1px solid #eee'
-              }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{item.name}</div>
-                  <div style={{ fontSize: '12px', color: '#666' }}>${item.price.toFixed(2)} c/u</div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button 
-                    onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                    style={{ width: '24px', height: '24px', border: '1px solid #ddd', background: 'white', cursor: 'pointer' }}
-                  >-</button>
-                  <span style={{ minWidth: '20px', textAlign: 'center' }}>{item.quantity}</span>
-                  <button 
-                    onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                    style={{ width: '24px', height: '24px', border: '1px solid #ddd', background: 'white', cursor: 'pointer' }}
-                  >+</button>
-                  <button 
-                    onClick={() => removeFromCart(item.id)}
-                    style={{ marginLeft: '8px', color: '#d32f2f', background: 'none', border: 'none', cursor: 'pointer' }}
-                  >🗑️</button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Resumen */}
-        {cart.length > 0 && (
-          <>
-            <div style={{ borderTop: '1px solid #ddd', paddingTop: '15px', marginBottom: '15px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                <span>Subtotal:</span>
-                <span>${calculateSubtotal().toFixed(2)}</span>
-              </div>
-              {selectedCustomer && calculateDiscount() > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', color: '#d32f2f' }}>
-                  <span>Descuento:</span>
-                  <span>-${calculateDiscount().toFixed(2)}</span>
-                </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                <span>IVA (16%):</span>
-                <span>${calculateTax().toFixed(2)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 'bold', borderTop: '1px solid #ddd', paddingTop: '8px' }}>
-                <span>Total:</span>
-                <span>${calculateTotal().toFixed(2)}</span>
-              </div>
-            </div>
-
-            {/* Botones de pago */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <button 
-                onClick={() => processSale('Efectivo')}
-                style={{ 
-                  background: '#4caf50', 
-                  color: 'white', 
-                  padding: '12px', 
-                  border: 'none', 
-                  borderRadius: '4px', 
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold'
-                }}
-              >
-                💵 Pagar en Efectivo
-              </button>
-              <button 
-                onClick={() => processSale('Tarjeta')}
-                style={{ 
-                  background: '#2196f3', 
-                  color: 'white', 
-                  padding: '12px', 
-                  border: 'none', 
-                  borderRadius: '4px', 
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold'
-                }}
-              >
-                💳 Pagar con Tarjeta
-              </button>
-              <button 
-                onClick={() => processSale('Transferencia')}
-                style={{ 
-                  background: '#ff9800', 
-                  color: 'white', 
-                  padding: '12px', 
-                  border: 'none', 
-                  borderRadius: '4px', 
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold'
-                }}
-              >
-                📱 Transferencia
-              </button>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );
 };
+
 
 const Products = () => {
   const [products, setProducts] = useState<any[]>([]);
@@ -2070,7 +2132,7 @@ const Reports = () => {
         </button>
       </div>
 
-      {/* Contenido de las pestañas */}
+  {/* Contenido de las pestañas */}
       <div style={{ background: 'white', borderRadius: '0 12px 12px 12px', padding: '30px', border: '1px solid #e0e0e0', boxShadow: '0 8px 25px rgba(0,0,0,0.1)' }}>
         {activeTab === 'general' && renderGeneralTab()}
         {activeTab === 'customers' && renderCustomersTab()}
@@ -3023,9 +3085,12 @@ const Settings = () => {
 // Componente de Clientes
 const Customers = () => {
   const [customers, setCustomers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<any>(null);
+  const [detailsCustomer, setDetailsCustomer] = useState<any>(null);
   const [newCustomer, setNewCustomer] = useState({
     // Información básica
     name: '', 
@@ -3057,14 +3122,20 @@ const Customers = () => {
   });
 
   useEffect(() => {
-    loadCustomers();
+    loadAll();
   }, []);
 
-  const loadCustomers = async () => {
+  const loadAll = async () => {
     try {
       if (window.electronAPI) {
-        const data = await window.electronAPI.getCustomers();
-        setCustomers(data);
+        const [customersData, productsData, salesData] = await Promise.all([
+          window.electronAPI.getCustomers(),
+          window.electronAPI.getProducts(),
+          window.electronAPI.getSales()
+        ]);
+        setCustomers(customersData);
+        setProducts(productsData);
+        setSales(salesData);
       }
     } catch (error) {
       console.error('Error loading customers:', error);
@@ -3151,8 +3222,8 @@ const Customers = () => {
 
       if (updatedCount > 0) {
         const updateDetails = updates.join('\n');
-        alert(`✅ Se actualizaron ${updatedCount} clientes:\n\n${updateDetails}`);
-        loadCustomers(); // Recargar la lista
+  alert(`✅ Se actualizaron ${updatedCount} clientes:\n\n${updateDetails}`);
+  loadAll(); // Recargar la lista y ventas
       } else {
         alert('ℹ️ Todos los clientes ya tienen el nivel correcto según las configuraciones actuales.');
       }
@@ -3166,6 +3237,17 @@ const Customers = () => {
     e.preventDefault();
     try {
       if (window.electronAPI) {
+        // Validaciones simples
+        if (newCustomer.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newCustomer.email)) {
+          alert('Email inválido');
+          return;
+        }
+        const digits = (newCustomer.phone||'').replace(/\D+/g,'');
+        if (newCustomer.phone && digits.length < 7) {
+          alert('Teléfono principal inválido');
+          return;
+        }
+
         const customerData = {
           ...newCustomer,
           preferredCategories: newCustomer.preferredCategories.filter(cat => cat.trim() !== ''),
@@ -3180,7 +3262,7 @@ const Customers = () => {
         }
         
         resetForm();
-        loadCustomers();
+        loadAll();
       }
     } catch (error) {
       console.error('Error saving customer:', error);
@@ -3193,7 +3275,7 @@ const Customers = () => {
       try {
         if (window.electronAPI) {
           await window.electronAPI.deleteCustomer(id);
-          loadCustomers();
+          loadAll();
         }
       } catch (error) {
         console.error('Error deleting customer:', error);
@@ -3238,13 +3320,21 @@ const Customers = () => {
     setShowAddForm(false);
   };
 
-  const filteredCustomers = customers.filter(customer =>
-    customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    customer.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    customer.phone?.includes(searchTerm) ||
-    customer.occupation?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    customer.customerType?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredCustomers = customers.filter(customer => {
+    const raw = searchTerm.trim();
+    if (!raw) return true;
+    const q = raw.toLowerCase();
+    const qDigits = raw.replace(/\D+/g,'');
+    const idMatch = String(customer.id||'').includes(raw);
+    const nameMatch = (customer.name||'').toLowerCase().includes(q);
+    const emailMatch = (customer.email||'').toLowerCase().includes(q);
+    const occMatch = (customer.occupation||'').toLowerCase().includes(q);
+    const typeMatch = (customer.customerType||'').toLowerCase().includes(q);
+    const tagMatch = (Array.isArray(customer.tags)? customer.tags.join(' ') : '').toLowerCase().includes(q);
+    const phones = [customer.phone, customer.alternatePhone].filter(Boolean) as string[];
+    const phoneMatch = qDigits.length>0 && phones.some(p => p.replace(/\D+/g,'').includes(qDigits));
+    return idMatch || nameMatch || emailMatch || occMatch || typeMatch || tagMatch || phoneMatch;
+  });
 
   const getDiscountColor = (level: string) => {
     switch(level) {
@@ -3277,6 +3367,72 @@ const Customers = () => {
       age--;
     }
     return age;
+  };
+
+  // Stats por cliente (usa ventas cargadas)
+  const getStatsForCustomer = (customerId: number) => {
+    const mySales = sales.filter((s:any)=> s.customerId === customerId);
+    const purchases = mySales.length;
+    const total = mySales.reduce((sum:number, s:any)=> sum + (Number(s.total)||0), 0);
+    const lastPurchase = mySales.reduce((acc:string, s:any)=> !acc || new Date(s.createdAt) > new Date(acc) ? s.createdAt : acc, '');
+    const avg = purchases ? +(total / purchases).toFixed(2) : 0;
+    // Top categorías: de productos + notas manuales
+    const catCount: Record<string, number> = {};
+    const prodMap = new Map(products.map((p:any)=> [p.id, p]));
+    mySales.forEach((s:any)=> {
+      (s.items||[]).forEach((it:any)=> {
+        if (it.productId && it.productId !== 0) {
+          const p = prodMap.get(it.productId);
+          const cat = p?.category || 'Sin categoría';
+          catCount[cat] = (catCount[cat]||0) + it.quantity;
+        }
+      });
+      if (typeof s.notes === 'string' && s.notes.includes('Categoría:')) {
+        const m = s.notes.match(/Categoría:\s*([^|]+)/);
+        if (m && m[1]) {
+          const cat = m[1].trim();
+          catCount[cat] = (catCount[cat]||0) + 1;
+        }
+      }
+    });
+    const topCategories = Object.entries(catCount).sort((a,b)=> b[1]-a[1]).slice(0,5);
+    const recent = [...mySales].sort((a:any,b:any)=> new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime()).slice(0,8);
+    return { purchases, total, lastPurchase, avg, topCategories, recent };
+  };
+
+  const recalcLevelFor = async (customer:any) => {
+    try {
+      const level = await calculateCustomerLevelBasic(customer.id);
+      await window.electronAPI.updateCustomer(customer.id, { ...customer, discountLevel: level });
+      alert(`Nivel actualizado: ${level}`);
+      loadAll();
+    } catch (e) {
+      console.error(e);
+      alert('Error al recalcular nivel');
+    }
+  };
+
+  const exportCSV = () => {
+    const rows = [
+      ['id','name','email','phone','alternatePhone','address','discountLevel','birthDate','gender','occupation','customerType','referredBy','preferredContact','budgetRange','isActive']
+    ];
+    customers.forEach((c:any)=> {
+      rows.push([
+        c.id, c.name||'', c.email||'', c.phone||'', c.alternatePhone||'', (c.address||'').replace(/\n/g,' '), c.discountLevel||'', c.birthDate||'', c.gender||'', c.occupation||'', c.customerType||'', c.referredBy||'', c.preferredContact||'', c.budgetRange||'', c.isActive!==false ? 'true':'false'
+      ].map(String));
+    });
+    const csv = rows.map(r=> r.map(f=> /[",\n]/.test(f) ? '"'+f.replace(/"/g,'""')+'"' : f).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date();
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth()+1).padStart(2,'0');
+    const dd = String(date.getDate()).padStart(2,'0');
+    a.download = `clientes_${yyyy}-${mm}-${dd}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -3316,6 +3472,23 @@ const Customers = () => {
           title="Recalcular niveles de todos los clientes según configuración actual"
         >
           🔄 Actualizar Niveles
+        </button>
+        <button 
+          onClick={exportCSV}
+          style={{ 
+            background: 'white', 
+            color: '#232323', 
+            padding: '12px 24px', 
+            border: '1px solid #e5e5ea', 
+            borderRadius: '8px', 
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: 'bold',
+            marginLeft: '10px'
+          }}
+          title="Exportar clientes a CSV"
+        >
+          ⬇️ Exportar CSV
         </button>
       </div>
 
@@ -3778,6 +3951,22 @@ const Customers = () => {
                 </td>
                 <td style={{ padding: '15px', textAlign: 'center' }}>
                   <button 
+                    onClick={() => setDetailsCustomer(customer)}
+                    style={{ 
+                      marginRight: '8px', 
+                      padding: '6px 12px', 
+                      border: '1px solid #4caf50', 
+                      background: 'white', 
+                      color: '#4caf50', 
+                      borderRadius: '6px', 
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    📄 Detalles
+                  </button>
+                  <button 
                     onClick={() => handleEdit(customer)}
                     style={{ 
                       marginRight: '8px', 
@@ -3792,6 +3981,23 @@ const Customers = () => {
                     }}
                   >
                     ✏️ Editar
+                  </button>
+                  <button
+                    onClick={() => recalcLevelFor(customer)}
+                    style={{ 
+                      marginRight: '8px', 
+                      padding: '6px 12px', 
+                      border: '1px solid #9c27b0', 
+                      background: 'white', 
+                      color: '#9c27b0', 
+                      borderRadius: '6px', 
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 'bold'
+                    }}
+                    title="Recalcular nivel de este cliente"
+                  >
+                    ⭐ Nivel
                   </button>
                   <button 
                     onClick={() => handleDelete(customer.id)}
@@ -3813,6 +4019,75 @@ const Customers = () => {
             ))}
           </tbody>
         </table>
+      </div>
+      {detailsCustomer && (
+        <CustomerDetailsModal
+          customer={detailsCustomer}
+          stats={getStatsForCustomer(detailsCustomer.id)}
+          onClose={() => setDetailsCustomer(null)}
+        />
+      )}
+    </div>
+  );
+};
+
+// Modal de detalles de cliente
+const CustomerDetailsModal: React.FC<{ customer:any, onClose:()=>void, stats:any }>= ({ customer, onClose, stats }) => {
+  const phoneDigits = (customer.phone||'').replace(/\D+/g,'');
+  const waLink = phoneDigits ? `https://wa.me/${phoneDigits}` : '';
+  const telLink = customer.phone ? `tel:${customer.phone}` : '';
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
+      <div style={{ background:'#fff', borderRadius:12, padding:24, width:'min(900px, 92vw)', maxHeight:'90vh', overflow:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+          <h2 style={{ margin:0 }}>🧑‍💼 {customer.name}</h2>
+          <button onClick={onClose} style={{ border:'1px solid #ddd', background:'#fff', borderRadius:8, padding:'6px 10px', cursor:'pointer' }}>Cerrar</button>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:12, marginBottom:16 }}>
+          <div className="stat-card"><div className="stat-value">{stats.purchases}</div><small>Compras</small></div>
+          <div className="stat-card"><div className="stat-value">{'$' + stats.total.toLocaleString()}</div><small>Total gastado</small></div>
+          <div className="stat-card"><div className="stat-value">{'$' + stats.avg.toLocaleString()}</div><small>Ticket promedio</small></div>
+          <div className="stat-card"><div className="stat-value">{stats.lastPurchase ? new Date(stats.lastPurchase).toLocaleDateString('es-MX') : '-'}</div><small>Última compra</small></div>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+          <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:10, padding:12 }}>
+            <h3 style={{ marginTop:0 }}>📞 Contacto</h3>
+            <div style={{ fontSize:14 }}>
+              {customer.email && <div>📧 {customer.email}</div>}
+              {customer.phone && <div>📞 {customer.phone}</div>}
+              {customer.alternatePhone && <div>📱 {customer.alternatePhone}</div>}
+              {customer.address && <div style={{ marginTop:6 }}>📍 {customer.address}</div>}
+            </div>
+            <div style={{ display:'flex', gap:8, marginTop:10 }}>
+              {waLink && <a href={waLink} target="_blank" rel="noreferrer" style={{ padding:'8px 10px', border:'1px solid #25D366', color:'#25D366', borderRadius:6, textDecoration:'none' }}>WhatsApp</a>}
+              {telLink && <a href={telLink} style={{ padding:'8px 10px', border:'1px solid #2196f3', color:'#2196f3', borderRadius:6, textDecoration:'none' }}>Llamar</a>}
+              {customer.email && <a href={`mailto:${customer.email}`} style={{ padding:'8px 10px', border:'1px solid #6c63ff', color:'#6c63ff', borderRadius:6, textDecoration:'none' }}>Email</a>}
+            </div>
+          </div>
+          <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:10, padding:12 }}>
+            <h3 style={{ marginTop:0 }}>🏷️ Top categorías</h3>
+            {stats.topCategories.length===0 ? <div style={{ color:'#666' }}>Sin datos</div> : (
+              <ul style={{ margin:0, paddingLeft:18 }}>
+                {stats.topCategories.map(([cat, cnt]:any)=> (
+                  <li key={cat}>{cat} · {cnt}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+        <div style={{ marginTop:16, background:'#fff', border:'1px solid #eee', borderRadius:10, padding:12 }}>
+          <h3 style={{ marginTop:0 }}>🧾 Ventas recientes</h3>
+          {stats.recent.length===0 ? <div style={{ color:'#666' }}>Sin ventas</div> : (
+            <div style={{ maxHeight:230, overflow:'auto' }}>
+              {stats.recent.map((s:any)=> (
+                <div key={s.id} style={{ display:'grid', gridTemplateColumns:'1fr auto', padding:'6px 0', borderBottom:'1px dashed #eee' }}>
+                  <div style={{ fontSize:13 }}>{new Date(s.createdAt).toLocaleString('es-MX')}</div>
+                  <div style={{ fontWeight:600 }}>{'$' + s.total.toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
