@@ -244,12 +244,38 @@ class JoyeriaApp {
         throw error;
       }
     });
+    ipcMain.handle(IPC_CHANNELS.GET_SALES_BY_RANGE, async (_evt, startDate: string, endDate: string) => {
+      try {
+        return await databaseService.getSalesByRange(startDate, endDate);
+      } catch (error) {
+        log.error('Error getting sales by range:', error);
+        throw error;
+      }
+    });
 
     ipcMain.handle(IPC_CHANNELS.CREATE_SALE, async (_, saleData) => {
       try {
         return await databaseService.createSale(saleData);
       } catch (error) {
         log.error('Error creating sale:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.UPDATE_SALE, async (_evt, id: number, saleData) => {
+      try {
+        return await databaseService.updateSale(id, saleData);
+      } catch (error) {
+        log.error('Error updating sale:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.DELETE_SALE, async (_evt, id: number) => {
+      try {
+        return await databaseService.deleteSale(id);
+      } catch (error) {
+        log.error('Error deleting sale:', error);
         throw error;
       }
     });
@@ -265,6 +291,28 @@ class JoyeriaApp {
         return result;
       } catch (error) {
         log.error('Error clearing sales:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.DELETE_ALL_SALES, async () => {
+      try {
+        const result = await databaseService.deleteAllSales();
+        if (result && this.mainWindow) {
+          this.mainWindow.webContents.send(IPC_CHANNELS.SALES_CHANGED);
+        }
+        return result;
+      } catch (error) {
+        log.error('Error deleting all sales:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.DELETE_ALL_CUSTOMERS, async () => {
+      try {
+        return await databaseService.deleteAllCustomers();
+      } catch (error) {
+        log.error('Error deleting all customers:', error);
         throw error;
       }
     });

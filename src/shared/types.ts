@@ -66,6 +66,9 @@ export interface Sale {
   createdAt: string;
   updatedAt: string;
   items: SaleItem[];
+  // Auditoría de descuento aplicado en el momento de la venta
+  appliedDiscountLevel?: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+  appliedDiscountPercent?: number; // porcentaje (ej. 5 para 5%)
 }
 
 export interface CashSession {
@@ -111,6 +114,7 @@ export const IPC_CHANNELS = {
   UPDATE_SALE: 'update-sale',
   DELETE_SALE: 'delete-sale',
   CLEAR_SALES: 'clear-sales',
+  GET_SALES_BY_RANGE: 'get-sales-by-range',
   SALES_CHANGED: 'sales-changed',
 
   // Sesiones de caja
@@ -123,6 +127,10 @@ export const IPC_CHANNELS = {
   GET_SETTINGS: 'get-settings',
   UPDATE_SETTING: 'update-setting',
   DELETE_SETTING: 'delete-setting',
+
+  // Administración avanzada
+  DELETE_ALL_SALES: 'delete-all-sales',
+  DELETE_ALL_CUSTOMERS: 'delete-all-customers',
 
   // Logging (renderer -> main)
   LOG_INFO: 'log-info',

@@ -116,8 +116,17 @@ class DatabaseService {
     return [...this.sales];
   }
 
+  async getSalesByRange(startDate: string, endDate: string): Promise<Sale[]> {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    return this.sales.filter(s => {
+      const d = new Date(s.createdAt);
+      return d >= start && d <= end;
+    });
+  }
+
   async createSale(saleData: Omit<Sale, 'id' | 'createdAt' | 'updatedAt'> & { createdAt?: string }): Promise<Sale> {
-    const newSale: Sale = {
+  const newSale: Sale = {
       id: Math.max(...this.sales.map(s => s.id), 0) + 1,
       ...saleData,
       status: 'Completada',
@@ -142,9 +151,73 @@ class DatabaseService {
     return newSale;
   }
 
+  async updateSale(id: number, saleData: Partial<Sale>): Promise<Sale | null> {
+    const index = this.sales.findIndex(s => s.id === id);
+    if (index === -1) return null;
+
+    // Nota: Para simplicidad no recalculamos stock si cambian los items.
+    // La edición típica desde Configuración será de status/pago/totales.
+    const prev = this.sales[index];
+    this.sales[index] = {
+      ...prev,
+      ...saleData,
+      id: prev.id,
+      createdAt: prev.createdAt,
+      updatedAt: new Date().toISOString(),
+    } as Sale;
+    await this.saveSalesToDiskSafe();
+    return this.sales[index];
+  }
+
+  async deleteSale(id: number): Promise<boolean> {
+    const index = this.sales.findIndex(s => s.id === id);
+    if (index === -1) return false;
+    const sale = this.sales[index];
+    // Revertir stock de productos al eliminar una venta
+    try {
+      for (const item of sale.items || []) {
+        const product = this.products.find(p => p.id === item.productId);
+        if (product) {
+          product.stock += item.quantity;
+          product.updatedAt = new Date().toISOString();
+        }
+      }
+    } catch {}
+    this.sales.splice(index, 1);
+    await Promise.all([
+      this.saveSalesToDiskSafe(),
+      this.saveProductsToDiskSafe()
+    ]);
+    return true;
+  }
+
   async clearSales(): Promise<boolean> {
     this.sales = [];
     await this.saveSalesToDiskSafe();
+    return true;
+  }
+
+  async deleteAllSales(): Promise<boolean> {
+    // Revert inventory from all sales, then clear
+    try {
+      for (const sale of this.sales) {
+        for (const item of sale.items || []) {
+          const product = this.products.find(p => p.id === item.productId);
+          if (product) {
+            product.stock += item.quantity;
+            product.updatedAt = new Date().toISOString();
+          }
+        }
+      }
+    } catch {}
+    this.sales = [];
+    await Promise.all([this.saveSalesToDiskSafe(), this.saveProductsToDiskSafe()]);
+    return true;
+  }
+
+  async deleteAllCustomers(): Promise<boolean> {
+    this.customers = [];
+    await this.saveCustomersToDiskSafe();
     return true;
   }
 
@@ -393,7 +466,9 @@ class DatabaseService {
                 quantity: Number(it.quantity ?? 0),
                 unitPrice: Number(it.unitPrice ?? 0),
                 subtotal: Number(it.subtotal ?? (Number(it.quantity ?? 0) * Number(it.unitPrice ?? 0)))
-              })) : []
+              })) : [],
+              appliedDiscountLevel: ['Bronze','Silver','Gold','Platinum'].includes(s.appliedDiscountLevel) ? s.appliedDiscountLevel : undefined,
+              appliedDiscountPercent: typeof s.appliedDiscountPercent === 'number' ? Number(s.appliedDiscountPercent) : undefined
             }));
         }
       }

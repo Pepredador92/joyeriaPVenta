@@ -18,7 +18,10 @@ const electronAPI = {
   // Ventas
   getSales: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SALES),
   createSale: (saleData: any) => ipcRenderer.invoke(IPC_CHANNELS.CREATE_SALE, saleData),
+  updateSale: (id: number, saleData: any) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SALE, id, saleData),
+  deleteSale: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_SALE, id),
   clearSales: () => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_SALES),
+  getSalesByRange: (startDate: string, endDate: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_SALES_BY_RANGE, startDate, endDate),
 
   // Sesiones de caja
   getCashSessions: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CASH_SESSIONS),
@@ -29,6 +32,8 @@ const electronAPI = {
   // Configuración
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SETTINGS),
   updateSetting: (key: string, value: string) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTING, key, value),
+  deleteAllSales: () => ipcRenderer.invoke(IPC_CHANNELS.DELETE_ALL_SALES),
+  deleteAllCustomers: () => ipcRenderer.invoke(IPC_CHANNELS.DELETE_ALL_CUSTOMERS),
 
   // Logging
   logInfo: (msg: string) => ipcRenderer.invoke(IPC_CHANNELS.LOG_INFO, msg),
