@@ -1,4 +1,33 @@
-# Logs
+### Node, React/Vite, Electron
+node_modules/
+dist/
+out/
+.vite/
+.next/
+.parcel-cache/
+dist-ssr/
+*.local
+
+# macOS
+.DS_Store
+
+### Electron Builder artifacts
+/release/
+*.dmg
+*.exe
+*.blockmap
+*.snap
+*.AppImage
+*.asar
+*.zip
+*.tar.gz
+*.pkg
+
+# Generated YAMLs from electron-builder
+latest*.yml
+builder*.yml
+
+### Logs & debug
 logs
 *.log
 npm-debug.log*
@@ -6,33 +35,15 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+debug.log
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Build artifacts and installers
-release/
-release/**
-*.dmg
-*.AppImage
-*.deb
-*.exe
-*.zip
-*.tar.gz
-*.pkg
-
-# macOS app bundles (never commit built apps)
-*.app/
-
-# Editor directories and files
-.vscode/*
+### IDE / OS files
+.idea/
+.vscode/
 !.vscode/extensions.json
-.idea
-.DS_Store
+*.swp
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?

@@ -1,0 +1,9 @@
+# Treat installer/binary artifacts as binary to avoid useless diffs
+*.dmg binary
+*.exe binary
+*.asar binary
+*.AppImage binary
+*.snap binary
+*.zip binary
+*.tar.gz binary
+*.pkg binary
