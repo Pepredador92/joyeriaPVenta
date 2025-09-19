@@ -2,11 +2,6 @@ import { Customer, Sale, Product } from '../../shared/types';
 import { getCustomerLevelRules } from '../configuracion/configuracionService';
 
 // Tipos
-export type Cliente = Customer;
-
-export type FiltrosClientes = {
-  query?: string;
-};
 
 export type CustomerStatsEntry = {
   customer: Customer;
