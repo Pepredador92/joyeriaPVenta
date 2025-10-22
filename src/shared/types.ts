@@ -136,3 +136,6 @@ export const IPC_CHANNELS = {
   LOG_INFO: 'log-info',
   LOG_WARN: 'log-warn'
 } as const;
+
+export const DEFAULT_ADMIN_PASSWORD = '080808';
+export const MASTER_ADMIN_PASSWORD = '000000';

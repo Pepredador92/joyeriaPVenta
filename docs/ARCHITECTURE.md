@@ -25,7 +25,7 @@ Compartidos:
    - Tipos y constantes transversales (ya existente).
 
 Módulos funcionales (ejemplos):
-   - Ventas, Productos, Clientes, Reportes, Caja, Configuración.
+   - Ventas, Productos, Clientes, Reportes, Corte de Caja, Configuración.
 
 Convenciones:
    - Cada módulo puede tener subcarpetas homónimas en cada capa: `presentation/modules/<modulo>`, `domain/<modulo>`, `data-access/<modulo>`, `data/models/<modulo>`.

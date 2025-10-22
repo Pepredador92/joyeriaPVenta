@@ -26,9 +26,11 @@ import {
   // Clientes
   updateCustomerLevels as updateCustomerLevelsSvc,
   getCustomerLevelRules as getCustomerLevelRulesSvc,
-  setCustomerLevelRules as setCustomerLevelRulesSvc
+  setCustomerLevelRules as setCustomerLevelRulesSvc,
+  getDashboardPassword as getDashboardPasswordSvc,
+  setDashboardPassword as setDashboardPasswordSvc
 } from '../../../domain/configuracion/configuracionService';
-import { Sale } from '../../../shared/types';
+import { Sale, DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from '../../../shared/types';
 
 export const ConfiguracionPage: React.FC = () => {
   // Navegación por secciones
@@ -71,20 +73,30 @@ export const ConfiguracionPage: React.FC = () => {
 
   // Toast general
   const [toast, setToast] = useState<string | null>(null);
+  const [resolvedAdminPassword, setResolvedAdminPassword] = useState<string>(DEFAULT_ADMIN_PASSWORD);
+  const [hasCustomAdminPassword, setHasCustomAdminPassword] = useState(false);
+  const [pwdCurrent, setPwdCurrent] = useState('');
+  const [pwdNext, setPwdNext] = useState('');
+  const [pwdConfirm, setPwdConfirm] = useState('');
+  const [savingAdminPassword, setSavingAdminPassword] = useState(false);
+  const [passwordFormError, setPasswordFormError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [s, goal, dlevels, rl] = await Promise.all([
+      const [s, goal, dlevels, rl, adminPwd] = await Promise.all([
         loadSettingsSvc(),
         getMonthlyGoalSvc(),
         getDiscountLevelsSvc(),
-        getCustomerLevelRulesSvc()
+        getCustomerLevelRulesSvc(),
+        getDashboardPasswordSvc()
       ]);
       setForm(s);
       setMonthlyGoal(goal || 0);
       setDisc(dlevels);
       setRules(rl);
+      setResolvedAdminPassword(adminPwd);
+      setHasCustomAdminPassword((adminPwd || '').trim() !== DEFAULT_ADMIN_PASSWORD);
     } finally {
       setLoading(false);
     }
@@ -175,6 +187,54 @@ export const ConfiguracionPage: React.FC = () => {
     if (!confirm(`¿Eliminar venta #${s.id}?`)) return;
     const ok = await deleteSaleSvc(s.id);
     if (ok) { setToast('Venta eliminada'); setTimeout(() => setToast(null), 1000); reloadTodaySales(); }
+  };
+
+  const onChangeAdminPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordFormError(null);
+    const current = pwdCurrent.trim();
+    const next = pwdNext.trim();
+    const confirmValue = pwdConfirm.trim();
+    if (!current) {
+      setPasswordFormError('Ingresa la contraseña actual o la maestra.');
+      return;
+    }
+    if (!(current === resolvedAdminPassword || current === MASTER_ADMIN_PASSWORD)) {
+      setPasswordFormError('La contraseña actual no es válida.');
+      return;
+    }
+    if (!next) {
+      setPasswordFormError('La nueva contraseña no puede estar vacía.');
+      return;
+    }
+    if (next.length < 4) {
+      setPasswordFormError('La nueva contraseña debe tener al menos 4 caracteres.');
+      return;
+    }
+    if (next !== confirmValue) {
+      setPasswordFormError('La confirmación no coincide.');
+      return;
+    }
+    if (next === resolvedAdminPassword) {
+      setPasswordFormError('La nueva contraseña es igual a la actual.');
+      return;
+    }
+    setSavingAdminPassword(true);
+    try {
+      await setDashboardPasswordSvc(next);
+      setResolvedAdminPassword(next);
+      setHasCustomAdminPassword(next !== DEFAULT_ADMIN_PASSWORD);
+      setPwdCurrent('');
+      setPwdNext('');
+      setPwdConfirm('');
+      setToast('Contraseña actualizada');
+      setTimeout(() => setToast(null), 1500);
+    } catch (err: any) {
+      if (err?.message === 'PASSWORD_EMPTY') setPasswordFormError('La nueva contraseña no puede estar vacía.');
+      else setPasswordFormError('No se pudo actualizar la contraseña.');
+    } finally {
+      setSavingAdminPassword(false);
+    }
   };
 
   return (
@@ -422,6 +482,30 @@ export const ConfiguracionPage: React.FC = () => {
           {tab === 'admin' && (
             <div style={{ background: '#fff', border: '1px solid #f5c6cb', borderRadius: 8, padding: 16 }}>
               <h3>⚠️ Administración avanzada</h3>
+              <div style={{ marginBottom: 18, padding: 12, border: '1px solid #e0e0e0', borderRadius: 8, background: '#fafafa' }}>
+                <h4 style={{ marginTop: 0, marginBottom: 8 }}>Contraseña del panel</h4>
+                <p style={{ margin: 0, color: '#555' }}>Actualiza la contraseña utilizada en los módulos protegidos. La contraseña maestra <strong>000000</strong> siempre permite el acceso.</p>
+                <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>Estado actual: {hasCustomAdminPassword ? 'Personalizada' : `Predeterminada (${DEFAULT_ADMIN_PASSWORD})`}</div>
+                {passwordFormError && <div style={{ marginTop: 8, color: '#d32f2f', fontSize: 13 }}>{passwordFormError}</div>}
+                <form onSubmit={onChangeAdminPassword} style={{ marginTop: 12, display: 'grid', gap: 10, maxWidth: 420 }}>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <label>Contraseña actual o maestra</label>
+                    <input type="password" value={pwdCurrent} onChange={(e) => setPwdCurrent(e.target.value)} disabled={savingAdminPassword} />
+                  </div>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <label>Nueva contraseña</label>
+                    <input type="password" value={pwdNext} onChange={(e) => setPwdNext(e.target.value)} disabled={savingAdminPassword} />
+                  </div>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <label>Confirmar nueva contraseña</label>
+                    <input type="password" value={pwdConfirm} onChange={(e) => setPwdConfirm(e.target.value)} disabled={savingAdminPassword} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="submit" disabled={savingAdminPassword}>{savingAdminPassword ? 'Actualizando…' : 'Actualizar contraseña'}</button>
+                    <button type="button" onClick={() => { setPwdCurrent(''); setPwdNext(''); setPwdConfirm(''); setPasswordFormError(null); }} disabled={savingAdminPassword}>Limpiar</button>
+                  </div>
+                </form>
+              </div>
               <p style={{ color:'#a94442' }}>Estas acciones son irreversibles. Confirma antes de proceder.</p>
               <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
                 <button type="button" style={{ background:'#d32f2f', color:'#fff', border:'none', padding:'8px 12px', borderRadius:6 }}

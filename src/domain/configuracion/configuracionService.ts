@@ -1,4 +1,4 @@
-import { Setting, Sale, Customer } from '../../shared/types';
+import { Setting, Sale, Customer, DEFAULT_ADMIN_PASSWORD } from '../../shared/types';
 import { loadCustomers, updateCustomer, decideCustomerLevelForCustomer } from '../clientes/clientesService';
 
 export type Configuracion = {
@@ -116,6 +116,33 @@ export async function setDiscountLevels(levels: DiscountLevels): Promise<void> {
 }
 
 function clamp0to100(n: number) { return Math.max(0, Math.min(100, Number(n) || 0)); }
+
+export async function getDashboardPassword(): Promise<string> {
+  try {
+    const rows: Setting[] = (await (window as any).electronAPI?.getSettings?.()) || [];
+    const map = new Map(rows.map(r => [r.key, r.value] as const));
+    const stored = (map.get('dashboardPassword') || '').trim();
+    if (stored) return stored;
+  } catch {}
+  try {
+    const local = (localStorage.getItem('dashboardPassword') || '').trim();
+    if (local) return local;
+  } catch {}
+  return DEFAULT_ADMIN_PASSWORD;
+}
+
+export async function setDashboardPassword(nextPassword: string): Promise<void> {
+  const clean = (nextPassword || '').trim();
+  if (!clean) {
+    const err = new Error('PASSWORD_EMPTY');
+    throw err;
+  }
+  const api = (window as any).electronAPI;
+  if (api?.updateSetting) {
+    await api.updateSetting('dashboardPassword', clean);
+  }
+  try { localStorage.setItem('dashboardPassword', clean); } catch {}
+}
 
 // Ventas del día
 export async function getTodaySales(): Promise<Sale[]> {

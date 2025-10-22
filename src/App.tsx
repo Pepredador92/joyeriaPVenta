@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
+import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from './shared/types';
 import { VentasPage } from './presentation/modules/ventas';
 import { ClientesPage } from './presentation/modules/clientes/ClientesPage';
 import { InventarioPage } from './presentation/modules/inventario/InventarioPage';
@@ -31,6 +32,15 @@ import {
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
 
+const resolveDashboardPassword = () => {
+  if (typeof localStorage === 'undefined') return DEFAULT_ADMIN_PASSWORD;
+  try {
+    const stored = (localStorage.getItem('dashboardPassword') || '').trim();
+    if (stored) return stored;
+  } catch {}
+  return DEFAULT_ADMIN_PASSWORD;
+};
+
 // Reusable password gate for protected modules (uses the same dashboard password)
 const AccessGate: React.FC<{ area: 'products' | 'reports' | 'settings'; children: React.ReactNode }> = ({ area, children }) => {
   const [unlocked, setUnlocked] = useState<boolean>(() => {
@@ -50,13 +60,13 @@ const AccessGate: React.FC<{ area: 'products' | 'reports' | 'settings'; children
     if (!unlocked) setShowModal(true);
   }, []);
 
-  const ADMIN_PASSWORD = (typeof localStorage !== 'undefined' && localStorage.getItem('dashboardPassword')) || '080808';
+  const ADMIN_PASSWORD = resolveDashboardPassword();
 
   const secondsLeft = cooldownUntil ? Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000)) : 0;
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (password === ADMIN_PASSWORD) {
+  if (password === ADMIN_PASSWORD || password === MASTER_ADMIN_PASSWORD) {
       setUnlocked(true);
       try { sessionStorage.setItem(`gate:${area}`, '1'); } catch {}
       setShowModal(false);
@@ -135,7 +145,7 @@ const Dashboard = () => {
   });
 
   // Privacy/masking state
-  const ADMIN_DASHBOARD_PASSWORD = (typeof localStorage !== 'undefined' && localStorage.getItem('dashboardPassword')) || '080808';
+  const ADMIN_DASHBOARD_PASSWORD = resolveDashboardPassword();
   const [isUnlocked, setIsUnlocked] = useState(() => {
     try {
       const s = localStorage.getItem('securitySettings');
@@ -222,7 +232,7 @@ const Dashboard = () => {
 
   const handleUnlock = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (passwordInput === ADMIN_DASHBOARD_PASSWORD) {
+  if (passwordInput === ADMIN_DASHBOARD_PASSWORD || passwordInput === MASTER_ADMIN_PASSWORD) {
       setIsUnlocked(true);
       setShowPasswordModal(false);
       setPasswordInput('');
@@ -1131,7 +1141,7 @@ const CashSession = () => {
   };
 
   // Password gate for deleting sessions (uses dashboard password)
-  const ADMIN_PASSWORD = (typeof localStorage !== 'undefined' && localStorage.getItem('dashboardPassword')) || '080808';
+  const ADMIN_PASSWORD = resolveDashboardPassword();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletePass, setDeletePass] = useState('');
   const [delAttempts, setDelAttempts] = useState(0);
@@ -1150,7 +1160,7 @@ const CashSession = () => {
     if (e) e.preventDefault();
     if (!sessionToDelete) return;
     if (delCooldownUntil && Date.now() < delCooldownUntil) return;
-    if (deletePass === ADMIN_PASSWORD) {
+  if (deletePass === ADMIN_PASSWORD || deletePass === MASTER_ADMIN_PASSWORD) {
       try {
         const ok = await window.electronAPI.deleteCashSession(sessionToDelete.id);
         if (ok) {
