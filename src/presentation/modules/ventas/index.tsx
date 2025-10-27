@@ -83,6 +83,8 @@ export const VentasPage: React.FC = () => {
     notas: ''
   });
 
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
 
@@ -128,7 +130,7 @@ export const VentasPage: React.FC = () => {
     e.preventDefault();
     const next = addManualQuickSaleSvc(orderItems, quickSale);
     if (next === orderItems) {
-      alert('Cantidad y precio deben ser mayores a 0');
+      setFeedback({ type: 'error', message: 'Cantidad y precio deben ser mayores a 0' });
       return;
     }
     setOrderItems(next);
@@ -156,18 +158,24 @@ export const VentasPage: React.FC = () => {
       setOrderItems([]);
       setSelectedCustomer(null);
       await loadData();
-      alert('Compra confirmada y guardada');
+      setFeedback({ type: 'success', message: 'Compra confirmada y guardada' });
     } catch (e: any) {
       if (e?.message === 'REQUIRE_CUSTOMER') {
-        alert('Debes seleccionar un cliente para confirmar la venta');
+        setFeedback({ type: 'error', message: 'Debes seleccionar un cliente para confirmar la venta' });
       } else {
         console.error('Error al confirmar compra:', e);
-        alert('Error al confirmar la compra');
+        setFeedback({ type: 'error', message: 'Error al confirmar la compra' });
       }
     } finally {
       setIsConfirming(false);
     }
   }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData]);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const timeout = setTimeout(() => setFeedback(null), 4000);
+    return () => clearTimeout(timeout);
+  }, [feedback]);
 
   const filteredProducts = computeFilteredProducts(products, searchTerm);
 
@@ -328,11 +336,11 @@ export const VentasPage: React.FC = () => {
           <button onClick={()=>setOrderItems([])} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Cancelar</button>
         </div>
 
-        {/* Ventas recientes */}
-        <div style={{ marginTop:16, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
-          <div style={{ maxHeight: 180, overflow: 'auto' }}>
-            {recentSales.length === 0 ? (
+      {/* Ventas recientes */}
+      <div style={{ marginTop:16, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
+        <div style={{ maxHeight: 180, overflow: 'auto' }}>
+          {recentSales.length === 0 ? (
               <div style={{ color: '#666', fontSize: 13 }}>Sin ventas aún</div>
             ) : (
               recentSales.map((s:any)=> (
@@ -342,9 +350,30 @@ export const VentasPage: React.FC = () => {
                 </div>
               ))
             )}
-          </div>
         </div>
       </div>
+      </div>
+      {feedback && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            background: feedback.type === 'success' ? '#2f855a' : feedback.type === 'error' ? '#c53030' : '#2b6cb0',
+            color: '#fff',
+            padding: '12px 16px',
+            borderRadius: 10,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+            zIndex: 2000,
+            minWidth: 220,
+            fontWeight: 600,
+            letterSpacing: 0.3,
+          }}
+        >
+          {feedback.message}
+        </div>
+      )}
     </div>
   );
 };
