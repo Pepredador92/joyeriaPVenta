@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   OrderItem,
   PaymentMethod,
@@ -84,18 +84,29 @@ export const VentasPage: React.FC = () => {
   });
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [isConfirming, setIsConfirming] = useState(false);
 
   // Configuración de descuentos/IVA
   const [discountMap, setDiscountMap] = useState<DiscountMap>({ Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 });
   const [taxRate, setTaxRate] = useState(0.16);
 
+  const loadData = useCallback(async () => {
+    try {
+      const data = await loadVentasData();
+      setProducts(data.products);
+      setRecentSales(data.recentSales);
+    } catch (e) {
+      console.error('Error loading sales data:', e);
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
-    const off = (window as any).electronAPI?.onSalesChanged?.(async () => {
-      try { await loadData(); } catch {}
+    const off = (window as any).electronAPI?.onSalesChanged?.(() => {
+      loadData().catch(() => {});
     });
     return () => { if (typeof off === 'function') off(); };
-  }, []);
+  }, [loadData]);
 
   useEffect(() => {
     // Inicial rápido por localStorage para no bloquear UI
@@ -106,16 +117,6 @@ export const VentasPage: React.FC = () => {
     readTaxRateFromSettings(localTax).then(setTaxRate).catch(()=>{});
     loadDiscountMapFromSettings().then(setDiscountMap).catch(()=>{});
   }, []);
-
-  const loadData = async () => {
-    try {
-      const data = await loadVentasData();
-  setProducts(data.products);
-  setRecentSales(data.recentSales);
-    } catch (e) {
-      console.error('Error loading sales data:', e);
-    }
-  };
 
   // Productos → agregar al pedido
   const addProductToOrder = (product:any) => {
@@ -143,17 +144,18 @@ export const VentasPage: React.FC = () => {
 
   // Totales
   const { subtotal, discount, tax, total } = computeTotals(orderItems, selectedCustomer, discountMap, taxRate);
-  const currency = React.useMemo(()=> new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }), []);
+  const currency = useMemo(()=> new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }), []);
   const appliedLevel = selectedCustomer?.discountLevel || 'Bronze';
   const appliedPercent = Math.round(((discountMap[appliedLevel]||0) * 100));
 
-  const confirmOrder = async () => {
-    if (orderItems.length === 0) return;
+  const confirmOrder = useCallback(async () => {
+    if (orderItems.length === 0 || isConfirming) return;
+    setIsConfirming(true);
     try {
       await confirmOrderSvc(orderItems, selectedCustomer, paymentMethod, { subtotal, discount, tax, total });
       setOrderItems([]);
       setSelectedCustomer(null);
-      loadData();
+      await loadData();
       alert('Compra confirmada y guardada');
     } catch (e: any) {
       if (e?.message === 'REQUIRE_CUSTOMER') {
@@ -162,13 +164,22 @@ export const VentasPage: React.FC = () => {
         console.error('Error al confirmar compra:', e);
         alert('Error al confirmar la compra');
       }
+    } finally {
+      setIsConfirming(false);
     }
-  };
+  }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData]);
 
   const filteredProducts = computeFilteredProducts(products, searchTerm);
 
   return (
-    <div style={{ padding:'30px', display:'grid', gridTemplateColumns:'1fr 420px', gap:'30px', minHeight:'100vh' }}>
+    <div style={{ position:'relative', padding:'30px', display:'grid', gridTemplateColumns:'1fr 420px', gap:'30px', minHeight:'100vh' }}>
+      {isConfirming && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.35)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9999, pointerEvents:'auto' }}>
+          <div style={{ background:'#fff', padding:'18px 24px', borderRadius:12, boxShadow:'0 12px 32px rgba(0,0,0,0.25)', fontWeight:600 }}>
+            Procesando transacción…
+          </div>
+        </div>
+      )}
       {/* Izquierda: catálogo + venta rápida */}
       <div style={{ background:'#fff', borderRadius:15, padding:25, boxShadow:'0 8px 30px rgba(0,0,0,0.08)' }}>
         <h1 style={{ color:'#1a202c', fontSize:'2.0rem', fontWeight:700, margin:'0 0 18px', textAlign:'center', borderBottom:'3px solid #4299e1', paddingBottom:12 }}>
@@ -313,8 +324,8 @@ export const VentasPage: React.FC = () => {
         </div>
 
         <div style={{ display:'flex', gap:8 }}>
-          <button onClick={confirmOrder} disabled={orderItems.length===0} style={{ flex:1, background:'#4caf50', color:'#fff', border:'none', borderRadius:6, padding:'10px 12px', cursor:'pointer', fontWeight:700 }}>Confirmar compra</button>
-          <button onClick={()=>setOrderItems([])} disabled={orderItems.length===0} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor:'pointer' }}>Cancelar</button>
+          <button onClick={confirmOrder} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#4caf50', color:'#fff', border:'none', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', fontWeight:700, opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Confirmar compra</button>
+          <button onClick={()=>setOrderItems([])} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Cancelar</button>
         </div>
 
         {/* Ventas recientes */}
