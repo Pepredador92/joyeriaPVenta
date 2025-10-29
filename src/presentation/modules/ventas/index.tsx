@@ -193,6 +193,10 @@ export const VentasPage: React.FC = () => {
       } else if (e?.message === 'INSUFFICIENT_STOCK' || e?.code === 'INSUFFICIENT_STOCK') {
         const categoryName = e?.categoryName || 'categoría seleccionada';
         setFeedback({ type: 'error', message: `Stock insuficiente en la ${categoryName}` });
+      } else if (e?.message === 'CUSTOMER_NOT_FOUND' || e?.code === 'CUSTOMER_NOT_FOUND') {
+        setFeedback({ type: 'error', message: 'Cliente no encontrado. Verifica la selección e inténtalo nuevamente.' });
+      } else if (e?.message === 'SALE_CONFIRMATION_FAILED' || e?.code === 'SALE_CONFIRMATION_FAILED') {
+        setFeedback({ type: 'error', message: 'Error al confirmar la compra. Intenta de nuevo o contacta a soporte.' });
       } else {
         console.error('Error al confirmar compra:', e);
         setFeedback({ type: 'error', message: 'Error al confirmar la compra' });

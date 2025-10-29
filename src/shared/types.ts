@@ -147,6 +147,7 @@ export const IPC_CHANNELS = {
   DELETE_SALE: 'delete-sale',
   CLEAR_SALES: 'clear-sales',
   GET_SALES_BY_RANGE: 'get-sales-by-range',
+  GET_SALES_BY_CUSTOMER: 'get-sales-by-customer',
   SALES_CHANGED: 'sales-changed',
 
   // Sesiones de caja

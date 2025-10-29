@@ -23,6 +23,7 @@ const electronAPI = {
   deleteSale: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_SALE, id),
   clearSales: () => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_SALES),
   getSalesByRange: (startDate: string, endDate: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_SALES_BY_RANGE, startDate, endDate),
+  getSalesByCustomer: (customerId: number) => ipcRenderer.invoke(IPC_CHANNELS.GET_SALES_BY_CUSTOMER, customerId),
 
   // Sesiones de caja
   getCashSessions: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CASH_SESSIONS),

@@ -12,6 +12,7 @@ import {
   getStatsForCustomer as getStatsForCustomerSvc,
   decideCustomerLevelFromTotal,
   phoneDigits as phoneDigitsUtil,
+  fetchSalesForCustomer as fetchSalesForCustomerSvc,
 } from './domain/clientes/clientesService';
 import {
   getVentasTotales as getVentasTotalesRpt,
@@ -1587,6 +1588,9 @@ const Reports = () => {
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=> setToast(null), 2500); };
   // Estado para detalles de cliente
   const [detailsCustomer, setDetailsCustomer] = useState<any|null>(null);
+  const [customerHistory, setCustomerHistory] = useState<any[]>([]);
+  const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
+  const [customerHistoryError, setCustomerHistoryError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -1674,6 +1678,35 @@ const Reports = () => {
       console.error('Error loading data:', error);
     }
   };
+
+  const loadCustomerHistory = useCallback(async (customerId: number) => {
+    const id = Number(customerId);
+    setCustomerHistoryLoading(true);
+    setCustomerHistory([]);
+    setCustomerHistoryError(null);
+    if (!Number.isFinite(id) || id <= 0) {
+      setCustomerHistoryLoading(false);
+      return;
+    }
+    try {
+      const history = await fetchSalesForCustomerSvc(id);
+      setCustomerHistory(history || []);
+    } catch (error) {
+      console.error('Error loading sales history for customer:', error);
+      setCustomerHistoryError('No se pudo cargar el historial de compras');
+      setCustomerHistory([]);
+    } finally {
+      setCustomerHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!detailsCustomer) {
+      setCustomerHistory([]);
+      setCustomerHistoryError(null);
+      setCustomerHistoryLoading(false);
+    }
+  }, [detailsCustomer]);
 
   const filteredSales = sales.filter(sale => {
     const saleDate = new Date(sale.createdAt).toISOString().split('T')[0];
@@ -1867,6 +1900,17 @@ const Reports = () => {
     }
   };
 
+  const openCustomerDetails = useCallback((customer: any) => {
+    setDetailsCustomer(customer);
+    if (customer?.id) {
+      loadCustomerHistory(customer.id);
+    } else {
+      setCustomerHistory([]);
+      setCustomerHistoryError(null);
+      setCustomerHistoryLoading(false);
+    }
+  }, [loadCustomerHistory]);
+
   const renderGeneralTab = () => (
     <div>
       {/* Resumen general */}
@@ -2025,8 +2069,8 @@ const Reports = () => {
                     {new Date(stat.lastPurchase).toLocaleDateString()}
                   </td>
                   <td style={{ padding: '15px', textAlign: 'center' }}>
-                    <button 
-                      onClick={() => setDetailsCustomer(stat.customer)}
+                    <button
+                      onClick={() => openCustomerDetails(stat.customer)}
                       style={{ 
                         marginRight: '8px', 
                         padding: '6px 12px', 
@@ -2101,6 +2145,12 @@ const Reports = () => {
         <CustomerDetailsModal
           customer={detailsCustomer}
           stats={getStatsForCustomer(detailsCustomer.id)}
+          history={customerHistory}
+          loadingHistory={customerHistoryLoading}
+          historyError={customerHistoryError}
+          onReload={() => {
+            if (detailsCustomer?.id) loadCustomerHistory(detailsCustomer.id);
+          }}
           onClose={() => setDetailsCustomer(null)}
         />
       )}
@@ -2148,11 +2198,77 @@ const Reports = () => {
 };
 
 // Modal de detalles de cliente
-type CustomerDetailsModalProps = { customer: any; onClose: () => void; stats: any };
-const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModalProps) => {
+type CustomerDetailsModalProps = {
+  customer: any;
+  onClose: () => void;
+  stats: any;
+  history: any[];
+  loadingHistory: boolean;
+  historyError: string | null;
+  onReload: () => void;
+};
+const CustomerDetailsModal = ({ customer, onClose, stats, history, loadingHistory, historyError, onReload }: CustomerDetailsModalProps) => {
   const phoneDigits = phoneDigitsUtil(customer.phone);
   const waLink = phoneDigits ? `https://wa.me/${phoneDigits}` : '';
   const telLink = customer.phone ? `tel:${customer.phone}` : '';
+  const historySummary = useMemo(() => {
+    if (Array.isArray(history) && history.length > 0) {
+      const sorted = [...history].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      let totalFromLines = 0;
+      const categoryTotals: Record<string, number> = {};
+      const enriched = sorted.map((sale: any) => {
+        const lineTotal = (sale.items || []).reduce((sum: number, item: any) => {
+          const quantity = Math.max(0, Number(item?.quantity ?? 0));
+          const unitPrice = Number(item?.unitPrice ?? 0);
+          const subtotal = quantity * unitPrice;
+          const catName = (item?.categoryName || item?.categoryId || 'Sin categoría').toString().trim() || 'Sin categoría';
+          categoryTotals[catName] = (categoryTotals[catName] || 0) + quantity;
+          return sum + subtotal;
+        }, 0);
+        totalFromLines += lineTotal;
+        return { ...sale, lineTotal };
+      });
+      const purchases = enriched.length;
+      const avgFromLines = purchases ? totalFromLines / purchases : 0;
+      const topCategories = Object.entries(categoryTotals)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      return {
+        purchases,
+        totalFromLines,
+        avgFromLines,
+        lastPurchase: enriched[0]?.createdAt ?? null,
+        topCategories,
+        historyRows: enriched,
+      };
+    }
+
+    const fallbackRecent = Array.isArray(stats?.recent)
+      ? stats.recent.map((sale: any) => {
+          const lineTotal = (sale.items || []).reduce((sum: number, item: any) => {
+            const quantity = Math.max(0, Number(item?.quantity ?? 0));
+            const unitPrice = Number(item?.unitPrice ?? 0);
+            return sum + quantity * unitPrice;
+          }, 0);
+          return { ...sale, lineTotal };
+        })
+      : [];
+    const fallbackTotal = fallbackRecent.reduce((sum: number, sale: any) => sum + (sale.lineTotal ?? 0), 0);
+    const fallbackPurchases = fallbackRecent.length || stats?.purchases || 0;
+    const fallbackAvg = fallbackPurchases ? fallbackTotal / fallbackPurchases : 0;
+    const fallbackLast = stats?.lastPurchase ?? (fallbackRecent[0]?.createdAt ?? null);
+    const fallbackTop = Array.isArray(stats?.topCategories) ? stats.topCategories : [];
+
+    return {
+      purchases: stats?.purchases ?? fallbackPurchases,
+      totalFromLines: fallbackTotal || stats?.total || 0,
+      avgFromLines: stats?.avg ?? fallbackAvg,
+      lastPurchase: fallbackLast,
+      topCategories: fallbackTop,
+      historyRows: fallbackRecent,
+    };
+  }, [history, stats]);
+
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
       <div style={{ background:'#fff', borderRadius:12, padding:24, width:'min(900px, 92vw)', maxHeight:'90vh', overflow:'auto' }}>
@@ -2161,10 +2277,10 @@ const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModal
           <button onClick={onClose} style={{ border:'1px solid #ddd', background:'#fff', borderRadius:8, padding:'6px 10px', cursor:'pointer' }}>Cerrar</button>
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:12, marginBottom:16 }}>
-          <div className="stat-card"><div className="stat-value">{stats.purchases}</div><small>Compras</small></div>
-          <div className="stat-card"><div className="stat-value">{'$' + stats.total.toLocaleString()}</div><small>Total gastado</small></div>
-          <div className="stat-card"><div className="stat-value">{'$' + stats.avg.toLocaleString()}</div><small>Ticket promedio</small></div>
-          <div className="stat-card"><div className="stat-value">{stats.lastPurchase ? new Date(stats.lastPurchase).toLocaleDateString('es-MX') : '-'}</div><small>Última compra</small></div>
+          <div className="stat-card"><div className="stat-value">{historySummary.purchases}</div><small>Compras</small></div>
+          <div className="stat-card"><div className="stat-value">{'$' + historySummary.totalFromLines.toLocaleString()}</div><small>Total gastado</small></div>
+          <div className="stat-card"><div className="stat-value">{'$' + historySummary.avgFromLines.toLocaleString()}</div><small>Ticket promedio</small></div>
+          <div className="stat-card"><div className="stat-value">{historySummary.lastPurchase ? new Date(historySummary.lastPurchase).toLocaleDateString('es-MX') : '-'}</div><small>Última compra</small></div>
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
           <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:10, padding:12 }}>
@@ -2183,9 +2299,9 @@ const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModal
           </div>
           <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:10, padding:12 }}>
             <h3 style={{ marginTop:0 }}>🏷️ Top categorías</h3>
-            {stats.topCategories.length===0 ? <div style={{ color:'#666' }}>Sin datos</div> : (
+            {historySummary.topCategories.length===0 ? <div style={{ color:'#666' }}>Sin datos</div> : (
               <ul style={{ margin:0, paddingLeft:18 }}>
-                {stats.topCategories.map(([cat, cnt]:any)=> (
+                {historySummary.topCategories.map(([cat, cnt]:any)=> (
                   <li key={cat}>{cat} · {cnt}</li>
                 ))}
               </ul>
@@ -2193,15 +2309,64 @@ const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModal
           </div>
         </div>
         <div style={{ marginTop:16, background:'#fff', border:'1px solid #eee', borderRadius:10, padding:12 }}>
-          <h3 style={{ marginTop:0 }}>🧾 Ventas recientes</h3>
-          {stats.recent.length===0 ? <div style={{ color:'#666' }}>Sin ventas</div> : (
-            <div style={{ maxHeight:230, overflow:'auto' }}>
-              {stats.recent.map((s:any)=> (
-                <div key={s.id} style={{ display:'grid', gridTemplateColumns:'1fr auto', padding:'6px 0', borderBottom:'1px dashed #eee' }}>
-                  <div style={{ fontSize:13 }}>{new Date(s.createdAt).toLocaleString('es-MX')}</div>
-                  <div style={{ fontWeight:600 }}>{'$' + s.total.toFixed(2)}</div>
-                </div>
-              ))}
+          <h3 style={{ marginTop:0 }}>🧾 Historial de compras</h3>
+          {loadingHistory ? (
+            <div style={{ color:'#666' }}>Cargando historial…</div>
+          ) : historyError ? (
+            <div style={{ color:'#d32f2f', display:'flex', alignItems:'center', gap:12 }}>
+              <span>{historyError}</span>
+              <button onClick={onReload} style={{ border:'1px solid #d32f2f', background:'#fff', color:'#d32f2f', borderRadius:6, padding:'4px 8px', cursor:'pointer' }}>Reintentar</button>
+            </div>
+          ) : historySummary.historyRows.length === 0 ? (
+            <div style={{ color:'#666' }}>Sin ventas</div>
+          ) : (
+            <div style={{ maxHeight:320, overflow:'auto', display:'flex', flexDirection:'column', gap:12 }}>
+              {historySummary.historyRows.map((sale:any) => {
+                const total = Number.isFinite(Number(sale.total)) ? Number(sale.total) : Number(sale.lineTotal ?? 0);
+                const discount = Number(sale.discount ?? 0);
+                const tax = Number(sale.tax ?? 0);
+                return (
+                  <div key={sale.id} style={{ border:'1px solid #f0f0f0', borderRadius:8, padding:12 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                      <div>
+                        <div style={{ fontWeight:600 }}>{new Date(sale.createdAt).toLocaleString('es-MX')}</div>
+                        <div style={{ fontSize:12, color:'#666' }}>Venta #{sale.id}</div>
+                      </div>
+                      <div style={{ textAlign:'right', fontSize:13 }}>
+                        <div style={{ fontWeight:600, fontSize:15 }}>{`$${total.toFixed(2)}`}</div>
+                        <div style={{ color:'#666' }}>Subtotal líneas: ${Number(sale.lineTotal ?? 0).toFixed(2)}</div>
+                        {discount > 0 && <div style={{ color:'#d32f2f' }}>Descuento: -${discount.toFixed(2)}</div>}
+                        {tax > 0 && <div style={{ color:'#4caf50' }}>Impuesto: ${tax.toFixed(2)}</div>}
+                      </div>
+                    </div>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+                      <thead>
+                        <tr style={{ textAlign:'left', borderBottom:'1px solid #eee' }}>
+                          <th style={{ padding:'4px 0' }}>Categoría</th>
+                          <th style={{ padding:'4px 0' }}>Cantidad</th>
+                          <th style={{ padding:'4px 0' }}>Precio unitario</th>
+                          <th style={{ padding:'4px 0', textAlign:'right' }}>Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(sale.items || []).map((item: any, idx: number) => {
+                          const qty = Math.max(0, Number(item?.quantity ?? 0));
+                          const unit = Number(item?.unitPrice ?? 0);
+                          const sub = qty * unit;
+                          return (
+                            <tr key={`${sale.id}-item-${idx}`} style={{ borderBottom:'1px dotted #f0f0f0' }}>
+                              <td style={{ padding:'4px 0' }}>{item?.categoryName || item?.categoryId || 'Sin categoría'}</td>
+                              <td style={{ padding:'4px 0' }}>{qty}</td>
+                              <td style={{ padding:'4px 0' }}>${unit.toFixed(2)}</td>
+                              <td style={{ padding:'4px 0', textAlign:'right' }}>${sub.toFixed(2)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

@@ -262,6 +262,15 @@ class JoyeriaApp {
       }
     });
 
+    ipcMain.handle(IPC_CHANNELS.GET_SALES_BY_CUSTOMER, async (_evt, customerId: number) => {
+      try {
+        return await databaseService.getSalesByCustomer(customerId);
+      } catch (error) {
+        log.error('Error getting sales by customer:', error);
+        throw error;
+      }
+    });
+
     ipcMain.handle(IPC_CHANNELS.CREATE_SALE, async (_, saleData) => {
       try {
         return await databaseService.createSale(saleData);

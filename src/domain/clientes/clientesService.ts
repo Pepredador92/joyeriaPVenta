@@ -22,6 +22,13 @@ export async function loadCustomers(): Promise<Customer[]> {
   return (await (window as any).electronAPI.getCustomers()) as Customer[];
 }
 
+export async function fetchSalesForCustomer(customerId: number): Promise<Sale[]> {
+  const id = Number(customerId);
+  if (!Number.isFinite(id) || id <= 0) return [];
+  if (!(window as any).electronAPI?.getSalesByCustomer) return [];
+  return (await (window as any).electronAPI.getSalesByCustomer(id)) as Sale[];
+}
+
 export function filterCustomers(customers: Customer[], query: string): Customer[] {
   const q = (query || '').trim().toLowerCase();
   if (!q) return customers;
