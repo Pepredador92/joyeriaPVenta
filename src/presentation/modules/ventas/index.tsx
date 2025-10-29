@@ -157,6 +157,10 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
     setSelectedCustomer(customer);
   }, []);
 
+  const handleCustomerClear = useCallback(() => {
+    setSelectedCustomer(null);
+  }, []);
+
   const loadData = useCallback(async () => {
     try {
       const data = await loadVentasData();
@@ -520,8 +524,39 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
           <label style={{ display:'block', marginBottom:8, fontWeight:600, color:'#2d3748' }}>👤 Cliente</label>
           <ClienteSelector onSelect={handleCustomerSelect} />
           {selectedCustomer ? (
-            <div style={{ marginTop:8, padding:'10px 12px', background:'linear-gradient(135deg, #4299e1, #3182ce)', borderRadius:8, color:'#fff', fontSize:13, textAlign:'center' }}>
-              Cliente seleccionado: <strong>{selectedCustomer.name}</strong> · Nivel: {selectedCustomer.discountLevel} · Descuento: {Math.round((discountMap[selectedCustomer.discountLevel]||0)*100)}%
+            <div
+              style={{
+                marginTop: 8,
+                padding: '10px 12px',
+                background: 'linear-gradient(135deg, #4299e1, #3182ce)',
+                borderRadius: 8,
+                color: '#fff',
+                fontSize: 13,
+                textAlign: 'center',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+              }}
+            >
+              <div>
+                Cliente seleccionado: <strong>{selectedCustomer.name}</strong> · Nivel: {selectedCustomer.discountLevel} · Descuento: {Math.round((discountMap[selectedCustomer.discountLevel]||0)*100)}%
+              </div>
+              <button
+                type="button"
+                onClick={handleCustomerClear}
+                style={{
+                  alignSelf: 'center',
+                  padding: '6px 14px',
+                  borderRadius: 999,
+                  border: 'none',
+                  background: '#edf2f7',
+                  color: '#1a202c',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Quitar cliente
+              </button>
             </div>
           ) : (
             <div style={{ marginTop:8, fontSize:12, color:'#666' }}>Cliente general (sin seleccionar)</div>
