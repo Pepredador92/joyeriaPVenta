@@ -171,6 +171,15 @@ class JoyeriaApp {
       }
     });
 
+    ipcMain.handle(IPC_CHANNELS.GET_CATEGORY_CATALOG, async (_, term?: string) => {
+      try {
+        return await databaseService.getCategoryCatalog(term);
+      } catch (error) {
+        log.error('Error getting category catalog:', error);
+        throw error;
+      }
+    });
+
     ipcMain.handle(IPC_CHANNELS.CREATE_PRODUCT, async (_, productData) => {
       try {
         return await databaseService.createProduct(productData);

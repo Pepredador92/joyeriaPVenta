@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import './App.css';
 import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD, CategoryOption } from './shared/types';
 import { VentasPage } from './presentation/modules/ventas';
@@ -30,6 +30,7 @@ import {
   getUniqueSKU,
   getCategoryOptions,
   filterCategorySuggestions,
+  loadCategoryCatalog,
 } from './domain/productos/productosService';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
@@ -639,22 +640,40 @@ const Products = () => {
     sku: '', name: '', stock: 0, category: '', description: ''
   });
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
+  const [categoryCatalog, setCategoryCatalog] = useState<CategoryOption[]>([]);
 
-  const categoryOptions = useMemo(() => getCategoryOptions(products), [products]);
+  const categoryOptionsFromProducts = useMemo(() => getCategoryOptions(products), [products]);
+  const mergedCategoryOptions = useMemo(() => {
+    const map = new Map<string, CategoryOption>();
+    [...categoryCatalog, ...categoryOptionsFromProducts].forEach((opt) => {
+      if (opt.id) map.set(opt.id, opt);
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  }, [categoryCatalog, categoryOptionsFromProducts]);
   const categorySuggestions = useMemo(
-    () => filterCategorySuggestions(categoryOptions, newProduct.category, 6),
-    [categoryOptions, newProduct.category]
+    () => filterCategorySuggestions(mergedCategoryOptions, newProduct.category, 6),
+    [mergedCategoryOptions, newProduct.category]
   );
 
 
+  const refreshCategoryCatalog = useCallback(async (term = '') => {
+    const catalog = await loadCategoryCatalog(term);
+    setCategoryCatalog(catalog);
+  }, []);
+
   useEffect(() => {
     loadProducts();
-  }, []);
+    refreshCategoryCatalog();
+  }, [refreshCategoryCatalog]);
 
   const loadProducts = async () => {
     try {
       const data = await loadProductosSvc();
       setProducts(data);
+      if (!categoryCatalog.length) {
+        const catalog = await loadCategoryCatalog();
+        setCategoryCatalog(catalog);
+      }
     } catch (error) {
       console.error('Error loading products:', error);
     }
@@ -680,7 +699,7 @@ const Products = () => {
         await createProductoSvc(payload as any);
       }
       resetForm();
-      loadProducts();
+      await Promise.all([loadProducts(), refreshCategoryCatalog()]);
     } catch (error) {
       const err: any = error as any;
       console.error('Error saving product:', err);
@@ -697,7 +716,7 @@ const Products = () => {
     if (confirm('¿Estás seguro de que quieres eliminar este producto?')) {
       try {
         await deleteProductoSvc(id);
-        loadProducts();
+        await Promise.all([loadProducts(), refreshCategoryCatalog()]);
       } catch (error) {
         console.error('Error deleting product:', error);
         alert('Error al eliminar el producto');
@@ -715,6 +734,7 @@ const Products = () => {
       description: product.description || ''
     });
     setShowAddForm(true);
+    refreshCategoryCatalog(product.category || '');
   };
 
   // Cuando se abre el formulario de nuevo producto, autogenerar SKU

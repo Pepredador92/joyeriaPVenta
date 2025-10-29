@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from '../shared/types';
 const electronAPI = {
   // Productos
   getProducts: () => ipcRenderer.invoke(IPC_CHANNELS.GET_PRODUCTS),
+  getCategoryCatalog: (term?: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_CATEGORY_CATALOG, term),
   createProduct: (productData: any) => ipcRenderer.invoke(IPC_CHANNELS.CREATE_PRODUCT, productData),
   updateProduct: (id: number, productData: any) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_PRODUCT, id, productData),
   deleteProduct: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_PRODUCT, id),

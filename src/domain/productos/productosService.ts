@@ -1,4 +1,4 @@
-import { CategoryOption, Product } from '../../shared/types';
+import { Category, CategoryOption, Product } from '../../shared/types';
 
 // Tipos
 export type Producto = Product;
@@ -31,6 +31,37 @@ const buildCategoryOption = (raw: string): CategoryOption => {
 
 export function toCategoryOption(name: string): CategoryOption {
   return buildCategoryOption(name);
+}
+
+export async function loadCategoryCatalog(term = ''): Promise<CategoryOption[]> {
+  try {
+    if (!(window as any).electronAPI?.getCategoryCatalog) {
+      const fallbackProducts = await loadProductos();
+      return getCategoryOptions(fallbackProducts);
+    }
+    const rows = (await (window as any).electronAPI.getCategoryCatalog(term)) as Category[];
+    if (!Array.isArray(rows)) return [];
+    const map = new Map<string, CategoryOption>();
+    rows.forEach((row) => {
+      const option = buildCategoryOption(row?.name || row?.id || '');
+      if (option.id) {
+        map.set(option.id, option);
+      }
+    });
+    if (map.size === 0 && !term) {
+      defaultCategories.forEach((cat) => {
+        const option = buildCategoryOption(cat);
+        map.set(option.id, option);
+      });
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  } catch (error) {
+    console.error('Error loading category catalog:', error);
+    if (!term) {
+      return defaultCategories.map((cat) => buildCategoryOption(cat));
+    }
+    return [];
+  }
 }
 
 export function getCategoryOptions(products: Product[]): CategoryOption[] {

@@ -129,6 +129,7 @@ export interface Setting {
 export const IPC_CHANNELS = {
   // Productos
   GET_PRODUCTS: 'get-products',
+  GET_CATEGORY_CATALOG: 'get-category-catalog',
   CREATE_PRODUCT: 'create-product',
   UPDATE_PRODUCT: 'update-product',
   DELETE_PRODUCT: 'delete-product',

@@ -1,4 +1,4 @@
-import { Product, Customer, Sale, CashSession, Setting, InventoryMovement } from '../../shared/types';
+import { Product, Customer, Sale, CashSession, Setting, InventoryMovement, Category } from '../../shared/types';
 import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
@@ -6,6 +6,9 @@ import path from 'path';
 class DatabaseService {
   // Ahora arrancamos sin datos de ejemplo; los arreglos comienzan vacíos.
   private products: Product[] = [];
+  private categories: Category[] = [];
+  private categoriesById = new Map<string, Category>();
+  private categoriesDirty = false;
   private customers: Customer[] = [];
   private sales: Sale[] = [];
   private cashSessions: CashSession[] = [];
@@ -32,6 +35,7 @@ class DatabaseService {
   private customersFilePath: string | null = null;
   private salesFilePath: string | null = null;
   private cashSessionsFilePath: string | null = null;
+  private categoriesFilePath: string | null = null;
 
   private saleItemSequence = 0;
   private inventoryMovementSequence = 0;
@@ -65,17 +69,28 @@ class DatabaseService {
   private ensureCategoryCatalogEntry(raw: string): { id: string; name: string } {
     const normalizedId = this.normalizeCategoryId(raw);
     if (!normalizedId) return { id: '', name: '' };
-    const existing = this.categoryDisplayById.get(normalizedId);
     const formatted = this.formatCategoryDisplay(raw) || this.formatCategoryDisplay(normalizedId) || 'Otros';
+    const existing = this.categoriesById.get(normalizedId);
+    const nowIso = new Date().toISOString();
     if (existing) {
-      if (formatted && formatted !== existing) {
-        this.categoryDisplayById.set(normalizedId, formatted);
-        return { id: normalizedId, name: formatted };
+      if (formatted && formatted !== existing.name) {
+        existing.name = formatted;
+        existing.updatedAt = nowIso;
+        this.categoriesDirty = true;
       }
-      return { id: normalizedId, name: existing };
+      this.categoryDisplayById.set(normalizedId, existing.name);
+      return { id: existing.id, name: existing.name };
     }
+    const entry: Category = {
+      id: normalizedId,
+      name: formatted,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    this.categoriesById.set(normalizedId, entry);
+    this.categoriesDirty = true;
     this.categoryDisplayById.set(normalizedId, formatted);
-    return { id: normalizedId, name: formatted };
+    return { id: entry.id, name: entry.name };
   }
 
   private rebuildCategoryCatalog() {
@@ -91,6 +106,20 @@ class DatabaseService {
         product.category = '';
       }
     }
+    this.syncCategoriesArray();
+  }
+
+  private syncCategoriesArray() {
+    this.categories = Array.from(this.categoriesById.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, 'es')
+    );
+  }
+
+  private async persistCategoriesIfNeeded() {
+    if (!this.categoriesDirty) return;
+    this.syncCategoriesArray();
+    await this.saveCategoriesToDiskSafe();
+    this.categoriesDirty = false;
   }
 
   private cleanSku(value: string | undefined | null): string {
@@ -117,6 +146,22 @@ class DatabaseService {
     return [...this.products];
   }
 
+  async getCategoryCatalog(term?: string): Promise<Category[]> {
+    if (this.categoriesDirty || this.categories.length === 0) {
+      this.syncCategoriesArray();
+    }
+    const query = this.cleanCategoryName(term).toLowerCase();
+    const candidates = this.categories.length
+      ? [...this.categories]
+      : Array.from(this.categoriesById.values());
+    if (!query) {
+      return candidates.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    }
+    return candidates
+      .filter((cat) => cat.name.toLowerCase().includes(query) || cat.id.includes(query))
+      .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  }
+
   async createProduct(productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
     const nowIso = new Date().toISOString();
     const { id: categoryId, name: categoryName } = this.ensureCategoryCatalogEntry(
@@ -136,7 +181,7 @@ class DatabaseService {
     } as Product;
     this.products.push(newProduct);
     this.rebuildCategoryCatalog();
-    await this.saveProductsToDiskSafe();
+    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategoriesIfNeeded()]);
     return newProduct;
   }
 
@@ -172,7 +217,7 @@ class DatabaseService {
       updatedAt: nowIso,
     } as Product;
     this.rebuildCategoryCatalog();
-    await this.saveProductsToDiskSafe();
+    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategoriesIfNeeded()]);
     return this.products[index];
   }
 
@@ -182,7 +227,7 @@ class DatabaseService {
 
     this.products.splice(index, 1);
     this.rebuildCategoryCatalog();
-    await this.saveProductsToDiskSafe();
+    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategoriesIfNeeded()]);
     return true;
   }
 
@@ -605,13 +650,17 @@ class DatabaseService {
       this.customersFilePath = path.join(userData, 'customers.json');
       this.salesFilePath = path.join(userData, 'sales.json');
       this.cashSessionsFilePath = path.join(userData, 'cash_sessions.json');
+      this.categoriesFilePath = path.join(userData, 'categories.json');
       await this.loadSettingsFromDiskSafe();
       await Promise.all([
+        this.loadCategoriesFromDiskSafe(),
         this.loadProductsFromDiskSafe(),
         this.loadCustomersFromDiskSafe(),
         this.loadSalesFromDiskSafe(),
         this.loadCashSessionsFromDiskSafe()
       ]);
+      this.seedDefaultCategories();
+      await this.persistCategoriesIfNeeded();
     } catch (e) {
       console.warn('⚠️ Could not prepare settings persistence:', e);
     }
@@ -704,6 +753,58 @@ class DatabaseService {
     } catch (e) {
       console.warn('⚠️ Failed to save products to disk:', e);
     }
+  }
+
+  private async loadCategoriesFromDiskSafe() {
+    if (!this.categoriesFilePath) return;
+    try {
+      if (fs.existsSync(this.categoriesFilePath)) {
+        const raw = await fs.promises.readFile(this.categoriesFilePath, 'utf-8');
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          this.categoriesById = new Map<string, Category>();
+          arr
+            .filter((c) => c && typeof c.name === 'string')
+            .forEach((c) => {
+              const entry: Category = {
+                id: this.normalizeCategoryId(c.id || c.name),
+                name: this.formatCategoryDisplay(c.name),
+                createdAt: c.createdAt || new Date().toISOString(),
+                updatedAt: c.updatedAt || new Date().toISOString(),
+              };
+              if (entry.id) {
+                this.categoriesById.set(entry.id, entry);
+                this.categoryDisplayById.set(entry.id, entry.name);
+              }
+            });
+          this.syncCategoriesArray();
+          this.categoriesDirty = false;
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Failed to load categories from disk:', e);
+    }
+  }
+
+  private async saveCategoriesToDiskSafe() {
+    if (!this.categoriesFilePath) return;
+    try {
+      const dir = path.dirname(this.categoriesFilePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(this.categoriesFilePath, JSON.stringify(this.categories, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('⚠️ Failed to save categories to disk:', e);
+    }
+  }
+
+  private seedDefaultCategories() {
+    const defaults = ['Anillos', 'Collares', 'Aretes', 'Pulseras', 'Relojes', 'Otros'];
+    defaults.forEach((name) => {
+      const entry = this.ensureCategoryCatalogEntry(name);
+      if (entry.id) {
+        this.categoryDisplayById.set(entry.id, entry.name);
+      }
+    });
   }
 
   private async loadCustomersFromDiskSafe() {
