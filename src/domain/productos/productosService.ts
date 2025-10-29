@@ -8,32 +8,64 @@ export type ProductoUpdateInput = Partial<Omit<Product, 'id' | 'createdAt' | 'up
 // Catálogo base de categorías
 export const defaultCategories = ['Anillos', 'Collares', 'Aretes', 'Pulseras', 'Relojes', 'Otros'] as const;
 
-const normalizeCategoryId = (name: string) => name.trim().toLowerCase();
+const normalizeCategoryId = (name: string) => name.replace(/\s+/g, ' ').trim().toLowerCase();
+
+const formatCategoryName = (name: string) => {
+  const clean = name.replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  return clean
+    .split(' ')
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : ''))
+    .join(' ')
+    .trim();
+};
+
+const fallbackCategory: CategoryOption = { id: 'otros', name: 'Otros' };
+
+const buildCategoryOption = (raw: string): CategoryOption => {
+  const formatted = formatCategoryName(raw);
+  const id = normalizeCategoryId(formatted || raw);
+  if (!id) return fallbackCategory;
+  return { id, name: formatted || fallbackCategory.name };
+};
 
 export function toCategoryOption(name: string): CategoryOption {
-  const clean = name.trim();
-  const fallback = 'Otros';
-  const finalName = clean || fallback;
-  return {
-    id: normalizeCategoryId(finalName) || normalizeCategoryId(fallback),
-    name: finalName,
-  };
+  return buildCategoryOption(name);
 }
 
 export function getCategoryOptions(products: Product[]): CategoryOption[] {
   const map = new Map<string, CategoryOption>();
   defaultCategories.forEach((cat) => {
-    const option = toCategoryOption(cat);
+    const option = buildCategoryOption(cat);
     map.set(option.id, option);
   });
   products.forEach((product) => {
-    if (!product?.category) return;
-    const option = toCategoryOption(product.category);
+    const raw = (product?.category && product.category.trim()) || product?.categoryId || '';
+    if (!raw) return;
+    const option = buildCategoryOption(raw);
     if (!map.has(option.id)) {
       map.set(option.id, option);
     }
   });
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es')); // stable order for dropdowns
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
+export function filterCategorySuggestions(options: CategoryOption[], term: string, limit = 8): CategoryOption[] {
+  const q = term.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!q) return options.slice(0, limit);
+  return options
+    .map((opt) => {
+      const nameLower = opt.name.toLowerCase();
+      const index = nameLower.indexOf(q);
+      return { opt, index: index === -1 ? Number.MAX_SAFE_INTEGER : index };
+    })
+    .filter(({ index }) => index !== Number.MAX_SAFE_INTEGER)
+    .sort((a, b) => {
+      if (a.index !== b.index) return a.index - b.index;
+      return a.opt.name.localeCompare(b.opt.name, 'es');
+    })
+    .map(({ opt }) => opt)
+    .slice(0, limit);
 }
 
 // Cargar productos
@@ -62,11 +94,8 @@ export function validateProducto(input: Partial<Product>): { ok: boolean; errors
   const sku = (input.sku || '').trim();
   if (input.sku !== undefined && !sku) errors.sku = 'El SKU es obligatorio';
 
-  const category = (input.category || '').trim();
-  if (!category) errors.category = 'La categoría es obligatoria';
-
-  const price = Number(input.price);
-  if (!isFinite(price) || price < 0) errors.price = 'Precio inválido';
+  const categoryName = formatCategoryName(input.category || input.categoryId || '');
+  if (!categoryName) errors.category = 'La categoría es obligatoria';
 
   const stock = Number(input.stock);
   if (!Number.isInteger(stock) || stock < 0) errors.stock = 'Stock inválido';
@@ -82,16 +111,17 @@ export async function createProducto(input: ProductoCreateInput): Promise<Produc
     (err as any).fields = v.errors;
     throw err;
   }
+  const categoryName = formatCategoryName(input.category || input.categoryId || '');
+  const categoryId = normalizeCategoryId(categoryName || input.categoryId || '');
   const payload: ProductoCreateInput = {
     sku: (input.sku || '').trim(),
     name: (input.name || '').trim(),
-    price: Number(input.price) || 0,
-    stock: Number(input.stock) || 0,
-    category: (input.category || '').trim(),
+    price: 0,
+    stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
+    category: categoryName,
+    categoryId: categoryId || undefined,
     description: input.description?.trim() || undefined,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  } as any;
+  } as ProductoCreateInput;
   return await (window as any).electronAPI.createProduct(payload);
 }
 
@@ -101,22 +131,30 @@ export async function updateProducto(id: number, input: ProductoUpdateInput): Pr
   const base = validateProducto({
     name: input.name ?? 'x',
     sku: input.sku ?? 'x',
-    category: input.category ?? 'x',
-    price: input.price ?? 0,
+    category: input.category ?? input.categoryId ?? 'x',
     stock: input.stock ?? 0,
   });
   // Quitar errores de campos no provistos (dummy)
   if (input.name === undefined) delete base.errors.name;
   if (input.sku === undefined) delete base.errors.sku;
-  if (input.category === undefined) delete base.errors.category;
-  if (input.price === undefined) delete base.errors.price;
+  if (input.category === undefined && input.categoryId === undefined) delete base.errors.category;
   if (input.stock === undefined) delete base.errors.stock;
   if (Object.keys(base.errors).length) {
     const err = new Error('VALIDATION_ERROR');
     (err as any).fields = base.errors;
     throw err;
   }
-  const patch: ProductoUpdateInput = { ...input };
+  const patch: ProductoUpdateInput = {};
+  if (input.sku !== undefined) patch.sku = input.sku.trim();
+  if (input.name !== undefined) patch.name = input.name.trim();
+  if (input.description !== undefined) patch.description = input.description.trim() || undefined;
+  if (input.stock !== undefined) patch.stock = Math.max(0, Math.floor(Number(input.stock)));
+  if (input.category !== undefined || input.categoryId !== undefined) {
+    const categoryName = formatCategoryName(input.category || input.categoryId || '');
+    const categoryId = normalizeCategoryId(categoryName || input.categoryId || '');
+    patch.category = categoryName;
+    patch.categoryId = categoryId || undefined;
+  }
   return await (window as any).electronAPI.updateProduct(id, patch);
 }
 

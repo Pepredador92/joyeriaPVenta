@@ -29,7 +29,7 @@ import {
   deleteProducto as deleteProductoSvc,
   getUniqueSKU,
   getCategoryOptions,
-  toCategoryOption,
+  filterCategorySuggestions,
 } from './domain/productos/productosService';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
@@ -636,11 +636,15 @@ const Products = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [newProduct, setNewProduct] = useState({
-    sku: '', name: '', price: 0, stock: 0, category: '', description: ''
+    sku: '', name: '', stock: 0, category: '', description: ''
   });
+  const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
 
   const categoryOptions = useMemo(() => getCategoryOptions(products), [products]);
-  const defaultCategoryName = categoryOptions[0]?.name ?? toCategoryOption('Otros').name;
+  const categorySuggestions = useMemo(
+    () => filterCategorySuggestions(categoryOptions, newProduct.category, 6),
+    [categoryOptions, newProduct.category]
+  );
 
 
   useEffect(() => {
@@ -666,10 +670,14 @@ const Products = () => {
         alert(first);
         return;
       }
+      const payload = {
+        ...newProduct,
+        stock: Number(newProduct.stock) || 0,
+      };
       if (editingProduct) {
-        await updateProductoSvc(editingProduct.id, newProduct);
+        await updateProductoSvc(editingProduct.id, payload as any);
       } else {
-        await createProductoSvc(newProduct as any);
+        await createProductoSvc(payload as any);
       }
       resetForm();
       loadProducts();
@@ -702,7 +710,6 @@ const Products = () => {
     setNewProduct({
       sku: product.sku,
       name: product.name,
-      price: product.price,
       stock: product.stock,
       category: product.category,
       description: product.description || ''
@@ -714,13 +721,15 @@ const Products = () => {
   const handleShowAddForm = () => {
     setEditingProduct(null);
     const uniqueSku = getUniqueSKU(products);
-    setNewProduct({ sku: uniqueSku, name: '', price: 0, stock: 0, category: defaultCategoryName, description: '' });
+    setNewProduct({ sku: uniqueSku, name: '', stock: 0, category: '', description: '' });
+    setShowCategorySuggestions(false);
     setShowAddForm(true);
   };
 
   const resetForm = () => {
-    setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: defaultCategoryName, description: '' });
+    setNewProduct({ sku: '', name: '', stock: 0, category: '', description: '' });
     setEditingProduct(null);
+    setShowCategorySuggestions(false);
     setShowAddForm(false);
   };
 
@@ -784,22 +793,50 @@ const Products = () => {
                     style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', background: editingProduct ? 'white' : '#f5f5f5', color: editingProduct ? 'black' : '#888' }}
                   />
                 </div>
-                <div>
+                <div style={{ position: 'relative' }}>
                   <label style={{ display: 'block', marginBottom: '5px' }}>Categoría:</label>
-                  <select
+                  <input
+                    type="text"
                     value={newProduct.category}
-                    onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
+                    onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
+                    onFocus={() => setShowCategorySuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowCategorySuggestions(false), 120)}
                     required
+                    placeholder="Escribe o selecciona una categoría"
                     style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                  >
-                    <option value="">Seleccionar...</option>
-                    {categoryOptions.map((cat: CategoryOption) => (
-                      <option key={cat.id} value={cat.name}>{cat.name}</option>
-                    ))}
-                    {newProduct.category && !categoryOptions.some((cat: CategoryOption) => cat.name === newProduct.category) && (
-                      <option value={newProduct.category}>{newProduct.category}</option>
-                    )}
-                  </select>
+                  />
+                  {showCategorySuggestions && categorySuggestions.length > 0 && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        right: 0,
+                        background: 'white',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        marginTop: '4px',
+                        maxHeight: '160px',
+                        overflowY: 'auto',
+                        zIndex: 20,
+                        boxShadow: '0 6px 16px rgba(0,0,0,0.12)'
+                      }}
+                    >
+                      {categorySuggestions.map((cat) => (
+                        <div
+                          key={cat.id}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setNewProduct((prev) => ({ ...prev, category: cat.name }));
+                            setShowCategorySuggestions(false);
+                          }}
+                          style={{ padding: '8px 10px', cursor: 'pointer' }}
+                        >
+                          {cat.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={{ marginBottom: '15px' }}>
@@ -812,28 +849,21 @@ const Products = () => {
                   style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                 />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px' }}>Precio:</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newProduct.price}
-                    onChange={(e) => setNewProduct({...newProduct, price: parseFloat(e.target.value) || 0})}
-                    required
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px' }}>Stock:</label>
-                  <input
-                    type="number"
-                    value={newProduct.stock}
-                    onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value) || 0})}
-                    required
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                  />
-                </div>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Stock:</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={newProduct.stock}
+                  onChange={(e) =>
+                    setNewProduct({
+                      ...newProduct,
+                      stock: Math.max(0, Number.isFinite(parseInt(e.target.value, 10)) ? parseInt(e.target.value, 10) : 0),
+                    })
+                  }
+                  required
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
               </div>
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '5px' }}>Descripción:</label>
@@ -879,7 +909,7 @@ const Products = () => {
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>SKU</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Producto</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Categoría</th>
-              <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Precio</th>
+              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Descripción</th>
               <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Stock</th>
               <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Acciones</th>
             </tr>
@@ -888,14 +918,7 @@ const Products = () => {
             {filteredProducts.map((product) => (
               <tr key={product.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                 <td style={{ padding: '12px', fontFamily: 'monospace' }}>{product.sku}</td>
-                <td style={{ padding: '12px' }}>
-                  <div>
-                    <div style={{ fontWeight: 'bold' }}>{product.name}</div>
-                    {product.description && (
-                      <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{product.description}</div>
-                    )}
-                  </div>
-                </td>
+                <td style={{ padding: '12px', fontWeight: 'bold' }}>{product.name}</td>
                 <td style={{ padding: '12px' }}>
                   <span style={{
                     padding: '4px 8px',
@@ -907,7 +930,7 @@ const Products = () => {
                     {product.category}
                   </span>
                 </td>
-                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>${product.price.toFixed(2)}</td>
+                <td style={{ padding: '12px', color: '#555', fontSize: '13px' }}>{product.description || '—'}</td>
                 <td style={{ padding: '12px', textAlign: 'right' }}>
                   <span style={{
                     color: product.stock < 10 ? '#d32f2f' : product.stock < 20 ? '#f57c00' : '#388e3c',

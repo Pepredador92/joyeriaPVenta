@@ -6,10 +6,18 @@ export interface Product {
   name: string;
   price: number;
   stock: number;
+  categoryId?: string;
   category: string;
   description?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CategoryOption {

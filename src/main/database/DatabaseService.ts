@@ -35,9 +35,81 @@ class DatabaseService {
 
   private saleItemSequence = 0;
   private inventoryMovementSequence = 0;
+  private categoryDisplayById = new Map<string, string>();
 
   private normalizeCategoryId(name: string | undefined | null): string {
-    return (name ?? '').toString().trim().toLowerCase();
+    return (name ?? '')
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+  }
+
+  private cleanCategoryName(name: string | undefined | null): string {
+    return (name ?? '')
+      .toString()
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private formatCategoryDisplay(name: string): string {
+    const clean = this.cleanCategoryName(name);
+    if (!clean) return '';
+    return clean
+      .split(' ')
+      .map((word) => (word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : ''))
+      .join(' ')
+      .trim();
+  }
+
+  private ensureCategoryCatalogEntry(raw: string): { id: string; name: string } {
+    const normalizedId = this.normalizeCategoryId(raw);
+    if (!normalizedId) return { id: '', name: '' };
+    const existing = this.categoryDisplayById.get(normalizedId);
+    const formatted = this.formatCategoryDisplay(raw) || this.formatCategoryDisplay(normalizedId) || 'Otros';
+    if (existing) {
+      if (formatted && formatted !== existing) {
+        this.categoryDisplayById.set(normalizedId, formatted);
+        return { id: normalizedId, name: formatted };
+      }
+      return { id: normalizedId, name: existing };
+    }
+    this.categoryDisplayById.set(normalizedId, formatted);
+    return { id: normalizedId, name: formatted };
+  }
+
+  private rebuildCategoryCatalog() {
+    this.categoryDisplayById = new Map<string, string>();
+    for (const product of this.products) {
+      const source = product.category || product.categoryId || '';
+      const entry = this.ensureCategoryCatalogEntry(source);
+      if (entry.id) {
+        product.categoryId = entry.id;
+        product.category = entry.name;
+      } else {
+        product.categoryId = undefined;
+        product.category = '';
+      }
+    }
+  }
+
+  private cleanSku(value: string | undefined | null): string {
+    return (value ?? '').toString().trim().toUpperCase();
+  }
+
+  private cleanName(value: string | undefined | null): string {
+    return this.cleanCategoryName(value) || '';
+  }
+
+  private cleanDescription(value: string | undefined | null): string | undefined {
+    const clean = this.cleanCategoryName(value);
+    return clean || undefined;
+  }
+
+  private cleanStock(value: number | string | undefined | null): number {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num)) return 0;
+    return Math.max(0, Math.floor(num));
   }
 
   // Productos
@@ -46,37 +118,72 @@ class DatabaseService {
   }
 
   async createProduct(productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
+    const nowIso = new Date().toISOString();
+    const { id: categoryId, name: categoryName } = this.ensureCategoryCatalogEntry(
+      productData.category || productData.categoryId || 'Otros'
+    );
     const newProduct: Product = {
-      id: Math.max(...this.products.map(p => p.id), 0) + 1,
-      ...productData,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+      id: Math.max(...this.products.map((p) => p.id), 0) + 1,
+      sku: this.cleanSku(productData.sku),
+      name: this.cleanName(productData.name),
+      price: Number.isFinite(productData.price) ? Number(productData.price) : 0,
+      stock: this.cleanStock(productData.stock),
+      categoryId: categoryId || undefined,
+      category: categoryName,
+      description: this.cleanDescription(productData.description),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    } as Product;
     this.products.push(newProduct);
-  await this.saveProductsToDiskSafe();
-  return newProduct;
+    this.rebuildCategoryCatalog();
+    await this.saveProductsToDiskSafe();
+    return newProduct;
   }
 
   async updateProduct(id: number, productData: Partial<Product>): Promise<Product | null> {
     const index = this.products.findIndex(p => p.id === id);
     if (index === -1) return null;
-    
+
+    const current = this.products[index];
+    const patch: Partial<Product> = {};
+    const nowIso = new Date().toISOString();
+
+    if (typeof productData.sku === 'string') patch.sku = this.cleanSku(productData.sku);
+    if (typeof productData.name === 'string') patch.name = this.cleanName(productData.name);
+    if (typeof productData.description !== 'undefined') patch.description = this.cleanDescription(productData.description);
+    if (typeof productData.stock !== 'undefined') patch.stock = this.cleanStock(productData.stock);
+    if (typeof productData.price !== 'undefined') patch.price = Number(productData.price);
+
+    if (typeof productData.category !== 'undefined' || typeof productData.categoryId !== 'undefined') {
+      const rawCategory =
+        (typeof productData.category === 'string' && productData.category) ||
+        (typeof productData.categoryId === 'string' && productData.categoryId) ||
+        current.category ||
+        current.categoryId ||
+        '';
+      const entry = this.ensureCategoryCatalogEntry(rawCategory);
+      patch.category = entry.name;
+      patch.categoryId = entry.id || undefined;
+    }
+
     this.products[index] = {
-      ...this.products[index],
-      ...productData,
-      updatedAt: new Date().toISOString()
-    };
-  await this.saveProductsToDiskSafe();
-  return this.products[index];
+      ...current,
+      ...patch,
+      updatedAt: nowIso,
+    } as Product;
+    this.rebuildCategoryCatalog();
+    await this.saveProductsToDiskSafe();
+    return this.products[index];
   }
 
   async deleteProduct(id: number): Promise<boolean> {
     const index = this.products.findIndex(p => p.id === id);
     if (index === -1) return false;
-    
-  this.products.splice(index, 1);
-  await this.saveProductsToDiskSafe();
-  return true;
+
+    this.products.splice(index, 1);
+    this.rebuildCategoryCatalog();
+    await this.saveProductsToDiskSafe();
+    return true;
   }
 
   // Clientes
@@ -562,19 +669,25 @@ class DatabaseService {
         const raw = await fs.promises.readFile(this.productsFilePath, 'utf-8');
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
+          this.categoryDisplayById = new Map<string, string>();
           this.products = arr
             .filter(p => p && typeof p.name === 'string')
-            .map((p, idx) => ({
-              id: typeof p.id === 'number' ? p.id : idx + 1,
-              sku: String(p.sku ?? ''),
-              name: String(p.name ?? ''),
-              price: Number(p.price ?? 0),
-              stock: Number(p.stock ?? 0),
-              category: String(p.category ?? ''),
-              description: typeof p.description === 'string' ? p.description : undefined,
-              createdAt: p.createdAt || new Date().toISOString(),
-              updatedAt: p.updatedAt || new Date().toISOString()
-            }));
+            .map((p, idx) => {
+              const { id, name } = this.ensureCategoryCatalogEntry(p.category ?? p.categoryId ?? '');
+              return {
+                id: typeof p.id === 'number' ? p.id : idx + 1,
+                sku: this.cleanSku(p.sku),
+                name: this.cleanName(p.name),
+                price: Number(p.price ?? 0),
+                stock: this.cleanStock(p.stock),
+                categoryId: id || undefined,
+                category: name,
+                description: this.cleanDescription(p.description),
+                createdAt: p.createdAt || new Date().toISOString(),
+                updatedAt: p.updatedAt || new Date().toISOString()
+              } as Product;
+            });
+          this.rebuildCategoryCatalog();
         }
       }
     } catch (e) {
