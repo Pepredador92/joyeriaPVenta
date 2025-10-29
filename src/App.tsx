@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD, Category } from './shared/types';
 import { VentasPage } from './presentation/modules/ventas';
@@ -32,6 +32,10 @@ import {
 } from './domain/productos/productosService';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
+
+type ToastTone = 'info' | 'success' | 'error';
+type ToastMessage = { id: number; text: string; tone: ToastTone };
+type ConfirmRequest = { message: string; detail?: string; resolve: (answer: boolean) => void };
 
 const resolveDashboardPassword = () => {
   if (typeof localStorage === 'undefined') return DEFAULT_ADMIN_PASSWORD;
@@ -629,7 +633,7 @@ const Dashboard = () => {
 // Ventas UI fue extraída a src/presentation/modules/ventas/VentasPage
 
 
-const Products = () => {
+const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; askConfirm: (message: string, detail?: string) => Promise<boolean> }> = ({ notify, askConfirm }) => {
   const [products, setProducts] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -682,40 +686,43 @@ const Products = () => {
     e.preventDefault();
     try {
       // Validar antes de enviar
-      const v = validateProductoSvc(newProduct);
-      if (!v.ok) {
-        const first = Object.values(v.errors)[0] || 'Datos inválidos';
-        alert(first);
-        return;
-      }
-      if (editingProduct) {
-        await updateProductoSvc(editingProduct.id, newProduct);
-      } else {
-        await createProductoSvc(newProduct as any);
-      }
-      resetForm();
-      loadProducts();
-    } catch (error) {
-      const err: any = error as any;
-      console.error('Error saving product:', err);
-      if (err?.message === 'VALIDATION_ERROR' && err.fields) {
-        const first = Object.values(err.fields)[0] as string;
-        alert(first || 'Error de validación');
-      } else {
-        alert('Error al guardar el producto');
-      }
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (confirm('¿Estás seguro de que quieres eliminar este producto?')) {
-      try {
-        await deleteProductoSvc(id);
+        const v = validateProductoSvc(newProduct);
+        if (!v.ok) {
+          const first = Object.values(v.errors)[0] || 'Datos inválidos';
+          notify(first, 'error');
+          return;
+        }
+        if (editingProduct) {
+          await updateProductoSvc(editingProduct.id, newProduct);
+          notify('Producto actualizado', 'success');
+        } else {
+          await createProductoSvc(newProduct as any);
+          notify('Producto creado', 'success');
+        }
+        resetForm();
         loadProducts();
       } catch (error) {
-        console.error('Error deleting product:', error);
-        alert('Error al eliminar el producto');
+        const err: any = error as any;
+        console.error('Error saving product:', err);
+        if (err?.message === 'VALIDATION_ERROR' && err.fields) {
+          const first = Object.values(err.fields)[0] as string;
+          notify(first || 'Error de validación', 'error');
+        } else {
+          notify('Error al guardar el producto', 'error');
+        }
       }
+    };
+
+  const handleDelete = async (id: number) => {
+    const shouldDelete = await askConfirm('¿Estás seguro de que quieres eliminar este producto?');
+    if (!shouldDelete) return;
+    try {
+      await deleteProductoSvc(id);
+      notify('Producto eliminado', 'success');
+      loadProducts();
+    } catch (error) {
+      console.error('Error deleting product:', error);
+      notify('Error al eliminar el producto', 'error');
     }
   };
 
@@ -973,7 +980,7 @@ const Products = () => {
 
 // Continúo implementando el resto de componentes...
 // Componente de Corte de Caja
-const CashSession = () => {
+const CashSession: React.FC<{ notify: (message: string, tone?: ToastTone) => void }> = ({ notify }) => {
   const [cashSessions, setCashSessions] = useState<any[]>([]);
   const [sales, setSales] = useState<any[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -1052,12 +1059,14 @@ const CashSession = () => {
             expectedAmount: summary.expectedCash,
             difference: newSession.finalAmount - summary.expectedCash
           });
+          notify('Sesión de caja actualizada', 'success');
         } else {
           await window.electronAPI.createCashSession({
             ...newSession,
             startTime: new Date().toISOString(),
             status: 'Abierta'
           });
+          notify('Sesión de caja creada', 'success');
         }
         resetForm();
         loadCashSessions();
@@ -1065,7 +1074,7 @@ const CashSession = () => {
       }
     } catch (error) {
       console.error('Error saving cash session:', error);
-      alert('Error al guardar la sesión de caja');
+      notify('Error al guardar la sesión de caja', 'error');
     }
   };
 
@@ -1206,12 +1215,13 @@ const CashSession = () => {
           setDelAttempts(0);
           await loadCashSessions();
           window.electronAPI?.logInfo?.('eliminar_sesion_caja_ok');
+          notify('Sesión de caja eliminada', 'success');
         } else {
-          alert('No se pudo eliminar la sesión');
+          notify('No se pudo eliminar la sesión', 'error');
         }
       } catch (err) {
         console.error('Error deleting session:', err);
-        alert('Error al eliminar la sesión');
+        notify('Error al eliminar la sesión', 'error');
       }
     } else {
       const next = delAttempts + 1;
@@ -2265,18 +2275,46 @@ const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModal
   );
 };
 
-// Página Clientes migrada a presentación
-const Customers = () => <ClientesPage />;
-
-// Página Configuración migrada a presentación
-const Settings = () => <ConfiguracionPage />;
-
 function App() {
   const [currentView, setCurrentView] = useState<CurrentView>('dashboard');
   const [nightMode, setNightMode] = useState<boolean>(() => {
     try { const s = localStorage.getItem('systemSettings'); if (s) return !!JSON.parse(s).nightMode; } catch {}
     return false;
   });
+
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+
+  const notify = useCallback((message: string, tone: ToastTone = 'info') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    const entry: ToastMessage = { id: Date.now(), text: message, tone };
+    setToast(entry);
+    toastTimerRef.current = setTimeout(() => setToast(null), 3200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const askConfirm = useCallback((message: string, detail?: string) => new Promise<boolean>((resolve) => {
+    setConfirmRequest({ message, detail, resolve });
+  }), []);
+
+  const resolveConfirm = useCallback((answer: boolean) => {
+    setConfirmRequest((current) => {
+      if (current) {
+        current.resolve(answer);
+      }
+      return null;
+    });
+  }, []);
 
   // Sync with changes done in Settings via storage events
   useEffect(() => {
@@ -2296,30 +2334,30 @@ function App() {
       case 'dashboard':
         return <Dashboard />;
       case 'sales':
-        return <VentasPage />;
+        return <VentasPage onNotify={notify} />;
       case 'products':
         return (
           <AccessGate area="products">
-            <Products />
+            <Products notify={notify} askConfirm={askConfirm} />
           </AccessGate>
         );
       case 'inventory':
-        return <InventarioPage />;
+        return <InventarioPage onNotify={notify} />;
       case 'customers':
-        return <Customers />;
+        return <ClientesPage onNotify={notify} onConfirm={askConfirm} />;
       case 'cash-session':
-        return <CashSession />;
+        return <CashSession notify={notify} />;
       case 'reports':
         return (
           <AccessGate area="reports">
             <Reports />
           </AccessGate>
         );
-      
+
       case 'settings':
         return (
           <AccessGate area="settings">
-            <Settings />
+            <ConfiguracionPage onNotify={notify} onConfirm={askConfirm} />
           </AccessGate>
         );
       default:
@@ -2369,9 +2407,90 @@ function App() {
       </div>
       <div className="main-content luxury-main" style={{ flex:1, overflow:'auto', minWidth:0, display:'flex', flexDirection:'column' }}>
         <div style={{ flex:1, display:'flex', flexDirection:'column', width:'100%', maxWidth:'1920px', margin:'0 auto', alignSelf:'stretch' }}>
-        {renderCurrentView()}
+          {renderCurrentView()}
         </div>
       </div>
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            padding: '12px 18px',
+            borderRadius: 12,
+            background: toast.tone === 'error' ? '#d32f2f' : toast.tone === 'success' ? '#2e7d32' : '#2f6fed',
+            color: '#fff',
+            fontWeight: 600,
+            boxShadow: '0 18px 34px rgba(15, 23, 42, 0.35)',
+            zIndex: 1600,
+            minWidth: 220,
+            letterSpacing: 0.3,
+          }}
+        >
+          {toast.text}
+        </div>
+      )}
+      {confirmRequest && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1650,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: 14,
+              padding: '24px 28px',
+              maxWidth: 420,
+              width: '100%',
+              boxShadow: '0 24px 60px rgba(15, 23, 42, 0.35)',
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: 8 }}>{confirmRequest.message}</h3>
+            {confirmRequest.detail && (
+              <p style={{ marginTop: 0, marginBottom: 18, color: '#4a5568', lineHeight: 1.4 }}>{confirmRequest.detail}</p>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button
+                type="button"
+                onClick={() => resolveConfirm(false)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: '1px solid #cbd5e0',
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => resolveConfirm(true)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: '#d32f2f',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -32,7 +32,14 @@ import {
 } from '../../../domain/configuracion/configuracionService';
 import { Sale, DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from '../../../shared/types';
 
-export const ConfiguracionPage: React.FC = () => {
+type ToastTone = 'info' | 'success' | 'error';
+
+type ConfiguracionPageProps = {
+  onNotify?: (message: string, tone?: ToastTone) => void;
+  onConfirm?: (message: string, detail?: string) => Promise<boolean>;
+};
+
+export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, onConfirm }) => {
   // Navegación por secciones
   const [tab, setTab] = useState<'generales' | 'dashboard' | 'clientes' | 'ventas' | 'descuentos' | 'historicas' | 'admin'>('generales');
 
@@ -72,7 +79,6 @@ export const ConfiguracionPage: React.FC = () => {
   const [savingRules, setSavingRules] = useState(false);
 
   // Toast general
-  const [toast, setToast] = useState<string | null>(null);
   const [resolvedAdminPassword, setResolvedAdminPassword] = useState<string>(DEFAULT_ADMIN_PASSWORD);
   const [hasCustomAdminPassword, setHasCustomAdminPassword] = useState(false);
   const [pwdCurrent, setPwdCurrent] = useState('');
@@ -112,8 +118,7 @@ export const ConfiguracionPage: React.FC = () => {
     setSaving(true);
     try {
       await updateSettingsSvc(form);
-      setToast('Cambios guardados');
-      setTimeout(() => setToast(null), 1500);
+      onNotify?.('Cambios guardados', 'success');
       // sincroniza modo nocturno en localStorage para UI si aplica
       try {
         const sysStr = localStorage.getItem('systemSettings');
@@ -123,7 +128,7 @@ export const ConfiguracionPage: React.FC = () => {
       } catch {}
     } catch (err: any) {
       if (err?.message === 'VALIDATION_ERROR') setErrors(err.fields || {});
-      else alert('No se pudo guardar');
+      else onNotify?.('No se pudo guardar', 'error');
     } finally {
       setSaving(false);
     }
@@ -139,14 +144,14 @@ export const ConfiguracionPage: React.FC = () => {
   const onSaveGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingGoal(true);
-    try { await setMonthlyGoalSvc(monthlyGoal); setToast('Meta mensual guardada'); setTimeout(() => setToast(null), 1200); }
+    try { await setMonthlyGoalSvc(monthlyGoal); onNotify?.('Meta mensual guardada', 'success'); }
     finally { setSavingGoal(false); }
   };
 
   const onSaveDiscounts = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingDisc(true);
-    try { await setDiscountLevelsSvc(disc); setToast('Descuentos guardados'); setTimeout(() => setToast(null), 1200); }
+    try { await setDiscountLevelsSvc(disc); onNotify?.('Descuentos guardados', 'success'); }
     finally { setSavingDisc(false); }
   };
 
@@ -155,15 +160,14 @@ export const ConfiguracionPage: React.FC = () => {
     try {
       const res = await updateCustomerLevelsSvc();
       setLevelsResult(res);
-      setToast(`Niveles actualizados: ${res.updated}/${res.examined}`);
-      setTimeout(() => setToast(null), 1500);
+      onNotify?.(`Niveles actualizados: ${res.updated}/${res.examined}`, 'success');
     } finally { setUpdatingLevels(false); }
   };
 
   const onEditSaleStatus = async (s: Sale, nextStatus: Sale['status']) => {
     const res = await updateSaleSvc(s.id, { status: nextStatus });
     if (res) {
-      setToast('Venta actualizada'); setTimeout(() => setToast(null), 1000);
+      onNotify?.('Venta actualizada', 'success');
       reloadTodaySales();
     }
   };
@@ -184,9 +188,13 @@ export const ConfiguracionPage: React.FC = () => {
   useEffect(() => { if (tab === 'historicas') reloadHistoric(); }, [histMode, histDay, histWeekStart, histMonth]);
 
   const onDeleteSale = async (s: Sale) => {
-    if (!confirm(`¿Eliminar venta #${s.id}?`)) return;
-    const ok = await deleteSaleSvc(s.id);
-    if (ok) { setToast('Venta eliminada'); setTimeout(() => setToast(null), 1000); reloadTodaySales(); }
+    const approved = onConfirm ? await onConfirm(`¿Eliminar venta #${s.id}?`) : true;
+    if (!approved) return;
+    const removed = await deleteSaleSvc(s.id);
+    if (removed) {
+      onNotify?.('Venta eliminada', 'success');
+      reloadTodaySales();
+    }
   };
 
   const onChangeAdminPassword = async (e: React.FormEvent) => {
@@ -227,8 +235,7 @@ export const ConfiguracionPage: React.FC = () => {
       setPwdCurrent('');
       setPwdNext('');
       setPwdConfirm('');
-      setToast('Contraseña actualizada');
-      setTimeout(() => setToast(null), 1500);
+      onNotify?.('Contraseña actualizada', 'success');
     } catch (err: any) {
       if (err?.message === 'PASSWORD_EMPTY') setPasswordFormError('La nueva contraseña no puede estar vacía.');
       else setPasswordFormError('No se pudo actualizar la contraseña.');
@@ -367,7 +374,7 @@ export const ConfiguracionPage: React.FC = () => {
                 </div>
               </div>
               <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                <button type="button" onClick={async ()=> { setSavingRules(true); try { await setCustomerLevelRulesSvc(rules); setToast('Reglas guardadas'); setTimeout(()=> setToast(null), 1200); } finally { setSavingRules(false); } }} disabled={savingRules}>
+                <button type="button" onClick={async ()=> { setSavingRules(true); try { await setCustomerLevelRulesSvc(rules); onNotify?.('Reglas guardadas', 'success'); } finally { setSavingRules(false); } }} disabled={savingRules}>
                   {savingRules ? 'Guardando…' : 'Guardar reglas de nivelación'}
                 </button>
                 <button type="button" onClick={async ()=> setRules(await getCustomerLevelRulesSvc())}>Restaurar</button>
@@ -510,24 +517,22 @@ export const ConfiguracionPage: React.FC = () => {
               <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
                 <button type="button" style={{ background:'#d32f2f', color:'#fff', border:'none', padding:'8px 12px', borderRadius:6 }}
                   onClick={async ()=>{
-                    if (!confirm('¿Eliminar TODAS las ventas? Esta acción no se puede deshacer.')) return;
+                    const confirmDelete = onConfirm ? await onConfirm('¿Eliminar TODAS las ventas?', 'Esta acción no se puede deshacer.') : true;
+                    if (!confirmDelete) return;
                     const ok = await deleteAllSalesSvc();
-                    if (ok) { setToast('Todas las ventas eliminadas'); setTimeout(()=> setToast(null), 1200); }
+                    if (ok) { onNotify?.('Todas las ventas eliminadas', 'success'); }
                   }}>Eliminar todas las ventas</button>
                 <button type="button" style={{ background:'#f57c00', color:'#fff', border:'none', padding:'8px 12px', borderRadius:6 }}
                   onClick={async ()=>{
-                    if (!confirm('¿Eliminar TODOS los clientes? Esta acción no se puede deshacer.')) return;
+                    const confirmDelete = onConfirm ? await onConfirm('¿Eliminar TODOS los clientes?', 'Esta acción no se puede deshacer.') : true;
+                    if (!confirmDelete) return;
                     const ok = await deleteAllCustomersSvc();
-                    if (ok) { setToast('Todos los clientes eliminados'); setTimeout(()=> setToast(null), 1200); }
+                    if (ok) { onNotify?.('Todos los clientes eliminados', 'success'); }
                   }}>Eliminar todos los clientes</button>
               </div>
             </div>
           )}
         </>
-      )}
-
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 16, right: 16, background: '#333', color: '#fff', padding: '8px 12px', borderRadius: 8 }}>{toast}</div>
       )}
     </div>
   );

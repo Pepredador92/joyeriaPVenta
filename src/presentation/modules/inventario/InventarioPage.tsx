@@ -10,11 +10,16 @@ import {
   InventarioItem,
 } from '../../../domain/inventario/inventarioService';
 
-export const InventarioPage: React.FC = () => {
+type ToastTone = 'info' | 'success' | 'error';
+
+type InventarioPageProps = {
+  onNotify?: (message: string, tone?: ToastTone) => void;
+};
+
+export const InventarioPage: React.FC<InventarioPageProps> = ({ onNotify }) => {
   const [items, setItems] = useState<InventarioItem[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
 
   const [tipo, setTipo] = useState<'entrada' | 'salida' | 'ajuste'>('entrada');
   const [productId, setProductId] = useState<number | ''>('' as any);
@@ -55,13 +60,12 @@ export const InventarioPage: React.FC = () => {
       if (tipo === 'entrada') await registrarEntrada(mov);
       else if (tipo === 'salida') await registrarSalida(mov);
       else await ajustarStock(mov);
-      setToast('Movimiento aplicado');
-      setTimeout(() => setToast(null), 1500);
+      onNotify?.('Movimiento aplicado', 'success');
       setCantidad(1); setNuevoStock(0); setRazon(''); setDocumento('');
       await reload();
     } catch (err: any) {
       if (err?.message === 'VALIDATION_ERROR') setErrors(err.fields || {});
-      else alert('No se pudo aplicar el movimiento');
+      else onNotify?.('No se pudo aplicar el movimiento', 'error');
     }
   };
 
@@ -162,9 +166,6 @@ export const InventarioPage: React.FC = () => {
         </table>
       </div>
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 16, right: 16, background: '#333', color: '#fff', padding: '8px 12px', borderRadius: 8 }}>{toast}</div>
-      )}
     </div>
   );
 };

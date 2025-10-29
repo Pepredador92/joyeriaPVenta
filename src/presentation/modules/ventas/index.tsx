@@ -21,12 +21,18 @@ import {
 } from '../../../domain/ventas/ventasService';
 import { searchCustomers } from '../../../domain/clientes/clientesService';
 
+type ToastTone = 'info' | 'success' | 'error';
+
 type QuickSaleDraft = {
   fecha: string;
   categoria: string;
   cantidad: string;
   precioUnitario: string;
   notas: string;
+};
+
+type VentasPageProps = {
+  onNotify?: (message: string, tone?: ToastTone) => void;
 };
 
 const sanitizeIntegerDraft = (raw: string, fallback: number): { value: number; display: string } => {
@@ -116,7 +122,7 @@ const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) =
 };
 
 // Página principal del módulo de Ventas (UI) extraída desde App.tsx
-export const VentasPage: React.FC = () => {
+export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
   const aliveRef = useRef(true);
   useEffect(() => () => {
     aliveRef.current = false;
@@ -269,7 +275,7 @@ export const VentasPage: React.FC = () => {
     };
     const next = addManualQuickSaleSvc(orderItems, normalizedQuickSale);
     if (next === orderItems) {
-      alert('Cantidad y precio deben ser mayores a 0');
+      onNotify?.('Cantidad y precio deben ser mayores a 0', 'error');
       return;
     }
     setOrderItems(next);
@@ -316,25 +322,25 @@ export const VentasPage: React.FC = () => {
       setSelectedCustomer(null);
       await loadData();
       if (aliveRef.current) {
-        alert('Compra confirmada y guardada');
+        onNotify?.('Compra confirmada y guardada', 'success');
       }
     } catch (e: any) {
       if (aliveRef.current) {
         const code = e?.code || e?.message;
         if (code === 'REQUIRE_CUSTOMER') {
-          alert('Debes seleccionar un cliente para confirmar la venta');
+          onNotify?.('Debes seleccionar un cliente para confirmar la venta', 'error');
         } else if (code === 'CUSTOMER_NOT_FOUND') {
-          alert('Cliente no encontrado. Selecciona nuevamente.');
+          onNotify?.('Cliente no encontrado. Selecciona nuevamente.', 'error');
         } else if (code === 'INSUFFICIENT_STOCK') {
           const cat = e?.categoryName ? ` para ${e.categoryName}` : '';
-          alert(`Stock insuficiente${cat}. Verifica las cantidades.`);
+          onNotify?.(`Stock insuficiente${cat}. Verifica las cantidades.`, 'error');
         } else if (code === 'INVALID_ITEM') {
-          alert('Hay líneas de venta con datos inválidos. Revisa cantidades y precios.');
+          onNotify?.('Hay líneas de venta con datos inválidos. Revisa cantidades y precios.', 'error');
         } else if (code === 'SALE_CONFIRMATION_FAILED') {
-          alert('Error al confirmar la compra. Inténtalo nuevamente.');
+          onNotify?.('Error al confirmar la compra. Inténtalo nuevamente.', 'error');
         } else {
           console.error('Error al confirmar compra:', e);
-          alert('Error al confirmar la compra');
+          onNotify?.('Error al confirmar la compra', 'error');
         }
       }
     } finally {

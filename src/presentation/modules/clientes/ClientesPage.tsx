@@ -8,16 +8,20 @@ import {
   validateCustomer,
 } from '../../../domain/clientes/clientesService';
 
-export const ClientesPage: React.FC = () => {
+type ToastTone = 'info' | 'success' | 'error';
+
+type ClientesPageProps = {
+  onNotify?: (message: string, tone?: ToastTone) => void;
+  onConfirm?: (message: string, detail?: string) => Promise<boolean>;
+};
+
+export const ClientesPage: React.FC<ClientesPageProps> = ({ onNotify, onConfirm }) => {
   const [customers, setCustomers] = useState<any[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState<any>({ name: '', email: '', phone: '', discountLevel: 'Bronze', customerType: 'Particular' });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [toast, setToast] = useState<string | null>(null);
-
-  const showToast = (msg: string) => { setToast(msg); setTimeout(()=> setToast(null), 2000); };
 
   const reload = async () => {
     setLoading(true);
@@ -41,17 +45,17 @@ export const ClientesPage: React.FC = () => {
     try {
       if (editingId) {
         await updateCustomerSvc(editingId, form);
-        showToast('Cliente actualizado');
+        onNotify?.('Cliente actualizado', 'success');
       } else {
         await createCustomerSvc(form);
-        showToast('Cliente creado');
+        onNotify?.('Cliente creado', 'success');
       }
       setForm({ name: '', email: '', phone: '', discountLevel: 'Bronze', customerType: 'Particular' });
       setEditingId(null);
       await reload();
     } catch (err: any) {
       if (err?.message === 'VALIDATION_ERROR') setErrors(err.fields || {});
-      else showToast('No se pudo guardar');
+      else onNotify?.('No se pudo guardar', 'error');
     }
   };
 
@@ -68,9 +72,10 @@ export const ClientesPage: React.FC = () => {
   };
 
   const onDelete = async (id: number) => {
-    if (!confirm('¿Eliminar cliente?')) return;
+    const shouldDelete = onConfirm ? await onConfirm('¿Eliminar cliente?') : true;
+    if (!shouldDelete) return;
     await deleteCustomerSvc(id);
-    showToast('Cliente eliminado');
+    onNotify?.('Cliente eliminado', 'success');
     await reload();
   };
 
@@ -163,9 +168,6 @@ export const ClientesPage: React.FC = () => {
         </table>
       </div>
 
-      {toast && (
-        <div style={{ position:'fixed', bottom:16, right:16, background:'#333', color:'#fff', padding:'8px 12px', borderRadius:8 }}>{toast}</div>
-      )}
     </div>
   );
 };
