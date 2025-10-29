@@ -12,6 +12,11 @@ export interface Product {
   updatedAt: string;
 }
 
+export interface CategoryOption {
+  id: string;
+  name: string;
+}
+
 export interface Customer {
   id: number;
   name: string;
@@ -48,10 +53,26 @@ export interface Customer {
 export interface SaleItem {
   id: number;
   saleId: number;
-  productId: number;
+  productId?: number;
+  categoryId?: string;
+  categoryName?: string;
   quantity: number;
   unitPrice: number;
   subtotal: number;
+  notes?: string;
+  type?: 'product' | 'manual';
+}
+
+export interface InventoryMovement {
+  id: number;
+  saleId?: number;
+  productId?: number;
+  categoryId?: string;
+  categoryName?: string;
+  quantity: number;
+  type: 'entrada' | 'salida' | 'ajuste';
+  createdAt: string;
+  notes?: string;
 }
 
 export interface Sale {
@@ -69,6 +90,8 @@ export interface Sale {
   // Auditoría de descuento aplicado en el momento de la venta
   appliedDiscountLevel?: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
   appliedDiscountPercent?: number; // porcentaje (ej. 5 para 5%)
+  notes?: string;
+  inventoryMovements?: InventoryMovement[];
 }
 
 export interface CashSession {

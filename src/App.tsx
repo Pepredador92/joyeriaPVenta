@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import './App.css';
-import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from './shared/types';
+import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD, CategoryOption } from './shared/types';
 import { VentasPage } from './presentation/modules/ventas';
 import { ClientesPage } from './presentation/modules/clientes/ClientesPage';
 import { InventarioPage } from './presentation/modules/inventario/InventarioPage';
@@ -28,6 +28,8 @@ import {
   updateProducto as updateProductoSvc,
   deleteProducto as deleteProductoSvc,
   getUniqueSKU,
+  getCategoryOptions,
+  toCategoryOption,
 } from './domain/productos/productosService';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
@@ -637,6 +639,9 @@ const Products = () => {
     sku: '', name: '', price: 0, stock: 0, category: '', description: ''
   });
 
+  const categoryOptions = useMemo(() => getCategoryOptions(products), [products]);
+  const defaultCategoryName = categoryOptions[0]?.name ?? toCategoryOption('Otros').name;
+
 
   useEffect(() => {
     loadProducts();
@@ -709,12 +714,12 @@ const Products = () => {
   const handleShowAddForm = () => {
     setEditingProduct(null);
     const uniqueSku = getUniqueSKU(products);
-    setNewProduct({ sku: uniqueSku, name: '', price: 0, stock: 0, category: '', description: '' });
+    setNewProduct({ sku: uniqueSku, name: '', price: 0, stock: 0, category: defaultCategoryName, description: '' });
     setShowAddForm(true);
   };
 
   const resetForm = () => {
-    setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: '', description: '' });
+    setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: defaultCategoryName, description: '' });
     setEditingProduct(null);
     setShowAddForm(false);
   };
@@ -788,12 +793,12 @@ const Products = () => {
                     style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                   >
                     <option value="">Seleccionar...</option>
-                    <option value="Anillos">Anillos</option>
-                    <option value="Collares">Collares</option>
-                    <option value="Aretes">Aretes</option>
-                    <option value="Pulseras">Pulseras</option>
-                    <option value="Relojes">Relojes</option>
-                    <option value="Otros">Otros</option>
+                    {categoryOptions.map((cat: CategoryOption) => (
+                      <option key={cat.id} value={cat.name}>{cat.name}</option>
+                    ))}
+                    {newProduct.category && !categoryOptions.some((cat: CategoryOption) => cat.name === newProduct.category) && (
+                      <option value={newProduct.category}>{newProduct.category}</option>
+                    )}
                   </select>
                 </div>
               </div>

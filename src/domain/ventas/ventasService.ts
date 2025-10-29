@@ -9,7 +9,8 @@ export type OrderItem = {
   type: 'product' | 'manual';
   productId?: number;
   name: string;
-  category?: string;
+  categoryId: string;
+  categoryName: string;
   unitPrice: number;
   quantity: number;
   notes?: string;
@@ -17,7 +18,8 @@ export type OrderItem = {
 
 export type QuickSale = {
   fecha: string;
-  categoria: string;
+  categoryId: string;
+  categoryName: string;
   cantidad: number;
   precioUnitario: number;
   notas?: string;
@@ -110,12 +112,16 @@ export async function readTaxRateFromSettings(current: number): Promise<number> 
   return current;
 }
 
+const normalizeCategoryId = (name: string) => (name || '').trim().toLowerCase();
+const resolveCategoryName = (product: any) => (product?.category || 'Sin categoría').trim() || 'Sin categoría';
+
 export function addProductToOrder(items: OrderItem[], product: any): OrderItem[] {
   if (product.stock <= 0) return items;
   const found = items.find((i) => i.type === 'product' && i.productId === product.id);
   if (found) {
     return items.map((i) => (i === found ? { ...i, quantity: i.quantity + 1 } : i));
   }
+  const categoryName = resolveCategoryName(product);
   return [
     ...items,
     {
@@ -123,7 +129,8 @@ export function addProductToOrder(items: OrderItem[], product: any): OrderItem[]
       type: 'product',
       productId: product.id,
       name: product.name,
-      category: product.category,
+      categoryId: normalizeCategoryId(product.category || categoryName),
+      categoryName,
       unitPrice: product.price,
       quantity: 1,
     },
@@ -137,8 +144,9 @@ export function addManualQuickSale(items: OrderItem[], quick: QuickSale): OrderI
     {
       id: Date.now(),
       type: 'manual',
-      name: `Venta rápida · ${quick.categoria}`,
-      category: quick.categoria,
+      name: `Venta rápida · ${quick.categoryName}`,
+      categoryId: quick.categoryId,
+      categoryName: quick.categoryName,
       unitPrice: Number(quick.precioUnitario) || 0,
       quantity: Math.floor(quick.cantidad) || 1,
       notes: quick.notas?.trim() || '',
@@ -150,7 +158,11 @@ export const removeItem = (items: OrderItem[], id: number) => items.filter((i) =
 export const updateQty = (items: OrderItem[], id: number, qty: number) =>
   items.map((i) => (i.id === id ? { ...i, quantity: Math.max(1, Math.floor(qty) || 1) } : i));
 export const updatePrice = (items: OrderItem[], id: number, price: number) =>
-  items.map((i) => (i.id === id ? { ...i, unitPrice: Math.min(999999, Math.max(0, Number(price) || 0)) } : i));
+  items.map((i) =>
+    i.id === id
+      ? { ...i, unitPrice: Math.min(999999, Math.max(0.01, Number.isFinite(price) ? Number(price) : 0.01)) }
+      : i
+  );
 
 export function computeFilteredCustomers(customers: any[], customerQuery: string): any[] {
   const raw = customerQuery.trim();
@@ -202,15 +214,35 @@ export async function confirmOrder(
     }
   } catch {}
 
+  const invalidItem = items.find(
+    (i) =>
+      !i ||
+      i.quantity < 1 ||
+      !Number.isFinite(i.quantity) ||
+      i.unitPrice <= 0 ||
+      !Number.isFinite(i.unitPrice) ||
+      !i.categoryId ||
+      !i.categoryName
+  );
+  if (invalidItem) {
+    const error = new Error('INVALID_ITEM');
+    (error as any).details = invalidItem;
+    throw error;
+  }
+
   const saleItems = items.map((i) => ({
-    productId: i.type === 'product' ? i.productId || 0 : 0,
-    quantity: i.quantity,
-    unitPrice: i.unitPrice,
+    productId: i.type === 'product' && i.productId ? i.productId : undefined,
+    categoryId: i.categoryId,
+    categoryName: i.categoryName,
+    quantity: Math.floor(i.quantity),
+    unitPrice: +(i.unitPrice || 0),
     subtotal: +(i.unitPrice * i.quantity).toFixed(2),
+    notes: i.notes || undefined,
+    type: i.type,
   }));
   const manualNotes = items
     .filter((i) => i.type === 'manual')
-    .map((i) => `Categoría: ${i.category}${i.notes ? ' | ' + i.notes : ''}`);
+    .map((i) => `Categoría: ${i.categoryName}${i.notes ? ' | ' + i.notes : ''}`);
 
   const saleData = {
     customerId: selectedCustomer?.id || undefined,
@@ -222,9 +254,9 @@ export async function confirmOrder(
     items: saleItems,
     notes: manualNotes.join(' || ') || undefined,
     createdAt: new Date().toISOString(),
-  // Auditoría de descuento aplicado
-  appliedDiscountLevel: (selectedCustomer?.discountLevel as any) || 'Bronze',
-  appliedDiscountPercent: +( (totals.subtotal > 0 ? (totals.discount / totals.subtotal) : 0) * 100 ).toFixed(2),
+    // Auditoría de descuento aplicado
+    appliedDiscountLevel: (selectedCustomer?.discountLevel as any) || 'Bronze',
+    appliedDiscountPercent: +(((totals.subtotal > 0 ? totals.discount / totals.subtotal : 0) || 0) * 100).toFixed(2),
   } as any;
 
   await (window as any).electronAPI.createSale(saleData);

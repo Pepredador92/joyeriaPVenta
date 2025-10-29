@@ -62,12 +62,18 @@ export class VentasService {
 
     const unit = input.precioUnitario && input.precioUnitario > 0 ? input.precioUnitario : this.getCategoryUnitPrice(input.categoria);
     const { subtotal, discount, tax, total } = this.calcularTotales(input.cantidad, unit);
+    const categoryName = input.categoria?.trim() || 'Otros';
+    const categoryId = categoryName.trim().toLowerCase();
 
     const item: SaleItemDTO = {
-      productId: input.productId ?? 0,
+      productId: input.productId,
+      categoryId,
+      categoryName,
       quantity: Math.floor(input.cantidad),
       unitPrice: unit,
-      subtotal: +(input.cantidad * unit).toFixed(2)
+      subtotal: +(input.cantidad * unit).toFixed(2),
+      notes: input.notas,
+      type: input.productId ? 'product' : 'manual',
     };
 
     const dto: CreateSaleDTO = {
@@ -78,7 +84,9 @@ export class VentasService {
       total,
       paymentMethod: input.metodoPago,
       items: [item],
-      notes: input.notas ? `${input.notas} | Categoría: ${input.categoria}` : `Categoría: ${input.categoria}`
+      notes: input.notas ? `${input.notas} | Categoría: ${categoryName}` : `Categoría: ${categoryName}`,
+      appliedDiscountLevel: undefined,
+      appliedDiscountPercent: undefined,
     };
 
     try {

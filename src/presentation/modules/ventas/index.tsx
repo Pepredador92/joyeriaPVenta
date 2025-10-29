@@ -20,6 +20,8 @@ import {
   loadDiscountMapFromSettings,
 } from '../../../domain/ventas/ventasService';
 import { searchCustomers } from '../../../domain/clientes/clientesService';
+import { getCategoryOptions, toCategoryOption } from '../../../domain/productos/productosService';
+import { CategoryOption } from '../../../shared/types';
 
 const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) => {
   const [q, setQ] = useState('');
@@ -75,13 +77,20 @@ export const VentasPage: React.FC = () => {
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => getInitialPaymentMethod());
 
-  const [quickSale, setQuickSale] = useState<QuickSale>({
-    fecha: new Date().toISOString().split('T')[0],
-    categoria: 'Anillos',
-    cantidad: 1,
-    precioUnitario: 0,
-    notas: ''
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [quickSale, setQuickSale] = useState<QuickSale>(() => {
+    const fallback = toCategoryOption('Otros');
+    return {
+      fecha: new Date().toISOString().split('T')[0],
+      categoryId: fallback.id,
+      categoryName: fallback.name,
+      cantidad: 1,
+      precioUnitario: 0,
+      notas: '',
+    };
   });
+
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
@@ -95,6 +104,17 @@ export const VentasPage: React.FC = () => {
       const data = await loadVentasData();
       setProducts(data.products);
       setRecentSales(data.recentSales);
+      const options = getCategoryOptions(data.products);
+      setCategories(options);
+      setQuickSale((prev) => {
+        const current = options.find((opt) => opt.id === prev.categoryId) || options.find((opt) => opt.name === prev.categoryName);
+        const fallback = current || options[0] || toCategoryOption(prev.categoryName || 'Otros');
+        return {
+          ...prev,
+          categoryId: fallback.id,
+          categoryName: fallback.name,
+        };
+      });
     } catch (e) {
       console.error('Error loading sales data:', e);
     }
@@ -128,11 +148,19 @@ export const VentasPage: React.FC = () => {
     e.preventDefault();
     const next = addManualQuickSaleSvc(orderItems, quickSale);
     if (next === orderItems) {
-      alert('Cantidad y precio deben ser mayores a 0');
+      setFeedback({ type: 'error', message: 'Cantidad y precio deben ser mayores a 0' });
       return;
     }
     setOrderItems(next);
-    setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: quickSale.categoria, cantidad: 1, precioUnitario: 0, notas: '' });
+    const fallback = categories.find((c) => c.id === quickSale.categoryId) || categories[0] || toCategoryOption(quickSale.categoryName);
+    setQuickSale({
+      fecha: new Date().toISOString().split('T')[0],
+      categoryId: fallback.id,
+      categoryName: fallback.name,
+      cantidad: 1,
+      precioUnitario: 0,
+      notas: '',
+    });
   };
 
   // Edición de líneas
@@ -156,18 +184,29 @@ export const VentasPage: React.FC = () => {
       setOrderItems([]);
       setSelectedCustomer(null);
       await loadData();
-      alert('Compra confirmada y guardada');
+      setFeedback({ type: 'success', message: 'Compra confirmada y guardada' });
     } catch (e: any) {
       if (e?.message === 'REQUIRE_CUSTOMER') {
-        alert('Debes seleccionar un cliente para confirmar la venta');
+        setFeedback({ type: 'error', message: 'Debes seleccionar un cliente para confirmar la venta' });
+      } else if (e?.message === 'INVALID_ITEM') {
+        setFeedback({ type: 'error', message: 'Revisa cantidades, precios y categoría de cada línea' });
+      } else if (e?.message === 'INSUFFICIENT_STOCK' || e?.code === 'INSUFFICIENT_STOCK') {
+        const categoryName = e?.categoryName || 'categoría seleccionada';
+        setFeedback({ type: 'error', message: `Stock insuficiente en la ${categoryName}` });
       } else {
         console.error('Error al confirmar compra:', e);
-        alert('Error al confirmar la compra');
+        setFeedback({ type: 'error', message: 'Error al confirmar la compra' });
       }
     } finally {
       setIsConfirming(false);
     }
   }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData]);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const timeout = setTimeout(() => setFeedback(null), 4000);
+    return () => clearTimeout(timeout);
+  }, [feedback]);
 
   const filteredProducts = computeFilteredProducts(products, searchTerm);
 
@@ -200,10 +239,20 @@ export const VentasPage: React.FC = () => {
             </div>
             <div>
               <label style={{ display:'block', fontSize:12, color:'#666' }}>Categoría</label>
-              <select value={quickSale.categoria} onChange={e=>setQuickSale({...quickSale, categoria:e.target.value})}
-                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}>
-                <option>Medalla</option><option>Cruz</option><option>Dije</option><option>Cadena</option><option>Juego</option><option>Anillo</option><option>Anillo-Compromiso</option><option>Anillo-Hombre</option><option>Argolla</option><option>Pulsera</option><option>Esclava</option><option>Arete</option><option>Broquel</option><option>Collar</option><option>Limpieza</option>
-                <option>Otros</option>
+              <select
+                value={quickSale.categoryId}
+                onChange={(e) => {
+                  const option = categories.find((c) => c.id === e.target.value) || toCategoryOption(e.target.value);
+                  setQuickSale({ ...quickSale, categoryId: option.id, categoryName: option.name });
+                }}
+                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}
+              >
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+                {categories.length === 0 && (
+                  <option value={quickSale.categoryId}>{quickSale.categoryName}</option>
+                )}
               </select>
             </div>
             <div>
@@ -214,8 +263,8 @@ export const VentasPage: React.FC = () => {
             </div>
             <div>
               <label style={{ display:'block', fontSize:12, color:'#666' }}>Precio Unitario</label>
-              <input type="number" min={0} step="0.01" value={quickSale.precioUnitario}
-                onChange={e=>setQuickSale({...quickSale, precioUnitario: Math.max(0, parseFloat((e.target as HTMLInputElement).value)||0)})}
+              <input type="number" min={0.01} step="0.01" value={quickSale.precioUnitario}
+                onChange={e=>setQuickSale({...quickSale, precioUnitario: Math.max(0.01, parseFloat((e.target as HTMLInputElement).value)||0.01)})}
                 style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }} />
             </div>
             <div style={{ gridColumn:'1/-1' }}>
@@ -225,8 +274,23 @@ export const VentasPage: React.FC = () => {
             </div>
             <div style={{ display:'flex', gap:12, alignItems:'center' }}>
               <button type="submit" style={{ background:'#2196f3', color:'#fff', border:'none', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Agregar al pedido</button>
-              <button type="button" onClick={()=>setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: 'Anillos', cantidad: 1, precioUnitario: 0, notas: '' })}
-                style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Limpiar</button>
+              <button
+                type="button"
+                onClick={() => {
+                  const fallback = categories[0] || toCategoryOption('Otros');
+                  setQuickSale({
+                    fecha: new Date().toISOString().split('T')[0],
+                    categoryId: fallback.id,
+                    categoryName: fallback.name,
+                    cantidad: 1,
+                    precioUnitario: 0,
+                    notas: '',
+                  });
+                }}
+                style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}
+              >
+                Limpiar
+              </button>
             </div>
           </form>
         </div>
@@ -276,14 +340,14 @@ export const VentasPage: React.FC = () => {
               <div key={it.id} style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:10, padding:10, marginBottom:8, background:'#fff', border:'1px solid #eee', borderRadius:8 }}>
                 <div>
                   <div style={{ fontWeight:600, fontSize:14 }}>{it.name}</div>
-                  <div style={{ fontSize:12, color:'#666' }}>{it.category || 'Sin categoría'} {it.type==='manual' && '· Manual'}</div>
+                  <div style={{ fontSize:12, color:'#666' }}>{it.categoryName || 'Sin categoría'} {it.type==='manual' && '· Manual'}</div>
                   <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
                     <button onClick={()=>updateQty(it.id, it.quantity-1)} style={{ width:24, height:24, border:'1px solid #ddd', background:'#fff', cursor:'pointer' }}>-</button>
                     <span style={{ minWidth:20, textAlign:'center' }}>{it.quantity}</span>
                     <button onClick={()=>updateQty(it.id, it.quantity+1)} style={{ width:24, height:24, border:'1px solid #ddd', background:'#fff', cursor:'pointer' }}>+</button>
                     <input
                       type="number"
-                      min={0}
+                      min={0.01}
                       step="0.01"
                       value={it.unitPrice}
                       onChange={e=>updatePriceManual(it.id, parseFloat((e.target as HTMLInputElement).value)||0)}
@@ -328,11 +392,11 @@ export const VentasPage: React.FC = () => {
           <button onClick={()=>setOrderItems([])} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Cancelar</button>
         </div>
 
-        {/* Ventas recientes */}
-        <div style={{ marginTop:16, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
-          <div style={{ maxHeight: 180, overflow: 'auto' }}>
-            {recentSales.length === 0 ? (
+      {/* Ventas recientes */}
+      <div style={{ marginTop:16, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
+        <div style={{ maxHeight: 180, overflow: 'auto' }}>
+          {recentSales.length === 0 ? (
               <div style={{ color: '#666', fontSize: 13 }}>Sin ventas aún</div>
             ) : (
               recentSales.map((s:any)=> (
@@ -342,9 +406,30 @@ export const VentasPage: React.FC = () => {
                 </div>
               ))
             )}
-          </div>
         </div>
       </div>
+      </div>
+      {feedback && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            background: feedback.type === 'success' ? '#2f855a' : feedback.type === 'error' ? '#c53030' : '#2b6cb0',
+            color: '#fff',
+            padding: '12px 16px',
+            borderRadius: 10,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+            zIndex: 2000,
+            minWidth: 220,
+            fontWeight: 600,
+            letterSpacing: 0.3,
+          }}
+        >
+          {feedback.message}
+        </div>
+      )}
     </div>
   );
 };

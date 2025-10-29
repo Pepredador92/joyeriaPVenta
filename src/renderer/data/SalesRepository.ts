@@ -1,9 +1,14 @@
 // Simple repository to interact with main process sales API
+import { InventoryMovement } from '../../shared/types';
 export interface SaleItemDTO {
-  productId: number;
+  productId?: number;
+  categoryId?: string;
+  categoryName?: string;
   quantity: number;
   unitPrice: number;
   subtotal: number;
+  notes?: string;
+  type?: 'product' | 'manual';
 }
 
 export interface CreateSaleDTO {
@@ -15,6 +20,8 @@ export interface CreateSaleDTO {
   paymentMethod: 'Efectivo' | 'Tarjeta' | 'Transferencia';
   items: SaleItemDTO[];
   notes?: string;
+  appliedDiscountLevel?: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+  appliedDiscountPercent?: number;
 }
 
 export interface SaleDTO extends CreateSaleDTO {
@@ -22,6 +29,7 @@ export interface SaleDTO extends CreateSaleDTO {
   status: 'Completada' | 'Cancelada' | 'Pendiente';
   createdAt: string;
   updatedAt: string;
+  inventoryMovements?: InventoryMovement[];
 }
 
 export interface ISalesRepository {

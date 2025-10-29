@@ -1,4 +1,4 @@
-import { Product } from '../../shared/types';
+import { CategoryOption, Product } from '../../shared/types';
 
 // Tipos
 export type Producto = Product;
@@ -7,6 +7,34 @@ export type ProductoUpdateInput = Partial<Omit<Product, 'id' | 'createdAt' | 'up
 
 // Catálogo base de categorías
 export const defaultCategories = ['Anillos', 'Collares', 'Aretes', 'Pulseras', 'Relojes', 'Otros'] as const;
+
+const normalizeCategoryId = (name: string) => name.trim().toLowerCase();
+
+export function toCategoryOption(name: string): CategoryOption {
+  const clean = name.trim();
+  const fallback = 'Otros';
+  const finalName = clean || fallback;
+  return {
+    id: normalizeCategoryId(finalName) || normalizeCategoryId(fallback),
+    name: finalName,
+  };
+}
+
+export function getCategoryOptions(products: Product[]): CategoryOption[] {
+  const map = new Map<string, CategoryOption>();
+  defaultCategories.forEach((cat) => {
+    const option = toCategoryOption(cat);
+    map.set(option.id, option);
+  });
+  products.forEach((product) => {
+    if (!product?.category) return;
+    const option = toCategoryOption(product.category);
+    if (!map.has(option.id)) {
+      map.set(option.id, option);
+    }
+  });
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es')); // stable order for dropdowns
+}
 
 // Cargar productos
 export async function loadProductos(): Promise<Product[]> {
