@@ -4,7 +4,7 @@ export type NuevaVentaInput = {
   fecha?: string; // ISO, defaults now
   categoria: string; // requerido ahora
   cantidad: number;
-  precioUnitario?: number; // opcional, si no se provee se infiere por categoría
+  precioUnitario?: number; // requerido (>0); mantenido opcional en el tipo para compatibilidad
   metodoPago: 'Efectivo' | 'Tarjeta' | 'Transferencia';
   customerId?: number;
   productId?: number; // optional simplified flow
@@ -37,31 +37,23 @@ export class VentasService {
 
   validar(input: NuevaVentaInput): NuevaVentaResultado | null {
     const errors: Partial<Record<keyof NuevaVentaInput, string>> = {};
-    if (!Number.isFinite(input.cantidad) || input.cantidad <= 0) errors.cantidad = 'Cantidad debe ser mayor a 0';
+    const qty = Math.floor(Number(input.cantidad));
+    if (!Number.isFinite(input.cantidad) || qty < 1) errors.cantidad = 'Cantidad debe ser un entero positivo';
+    const unit = Number(input.precioUnitario);
     if (!input.categoria) errors.categoria = 'La categoría es requerida';
     if (!input.metodoPago) errors.metodoPago = 'El método de pago es requerido';
+    if (!Number.isFinite(unit) || unit <= 0) errors.precioUnitario = 'Captura un precio unitario válido (> 0)';
     if (Object.keys(errors).length) return { ok: false, error: 'Validación fallida', fields: errors };
     return null;
-  }
-
-  private getCategoryUnitPrice(categoria: string): number {
-    const defaultMap: Record<string, number> = {
-      'Anillos': 1200,
-      'Collares': 1800,
-      'Aretes': 800,
-      'Pulseras': 900,
-      'Relojes': 2500,
-      'Otros': 600
-    };
-    return defaultMap[categoria] ?? defaultMap['Otros'];
   }
 
   async crearVenta(input: NuevaVentaInput): Promise<NuevaVentaResultado> {
     const invalid = this.validar(input);
     if (invalid) return invalid;
 
-    const unit = input.precioUnitario && input.precioUnitario > 0 ? input.precioUnitario : this.getCategoryUnitPrice(input.categoria);
-    const { subtotal, discount, tax, total } = this.calcularTotales(input.cantidad, unit);
+    const quantity = Math.max(0, Math.floor(Number(input.cantidad)));
+    const unit = Math.max(0.01, Number(input.precioUnitario));
+    const { subtotal, discount, tax, total } = this.calcularTotales(quantity, unit);
     const categoryName = input.categoria?.trim() || 'Otros';
     const categoryId = categoryName.trim().toLowerCase();
 
@@ -69,9 +61,9 @@ export class VentasService {
       productId: input.productId,
       categoryId,
       categoryName,
-      quantity: Math.floor(input.cantidad),
+      quantity,
       unitPrice: unit,
-      subtotal: +(input.cantidad * unit).toFixed(2),
+      subtotal: +(quantity * unit).toFixed(2),
       notes: input.notas,
       type: input.productId ? 'product' : 'manual',
     };
