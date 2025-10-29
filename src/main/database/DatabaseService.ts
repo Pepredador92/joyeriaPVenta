@@ -1,4 +1,4 @@
-import { Product, Customer, Sale, CashSession, Setting, InventoryMovement, Category } from '../../shared/types';
+import { Product, Customer, Sale, CashSession, Setting, Category, InventoryMovement } from '../../shared/types';
 import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
@@ -7,8 +7,7 @@ class DatabaseService {
   // Ahora arrancamos sin datos de ejemplo; los arreglos comienzan vacíos.
   private products: Product[] = [];
   private categories: Category[] = [];
-  private categoriesById = new Map<string, Category>();
-  private categoriesDirty = false;
+  private categoryIndex = new Map<string, Category>();
   private customers: Customer[] = [];
   private sales: Sale[] = [];
   private cashSessions: CashSession[] = [];
@@ -32,156 +31,143 @@ class DatabaseService {
   ];
   private settingsFilePath: string | null = null;
   private productsFilePath: string | null = null;
+  private categoriesFilePath: string | null = null;
   private customersFilePath: string | null = null;
   private salesFilePath: string | null = null;
   private cashSessionsFilePath: string | null = null;
-  private categoriesFilePath: string | null = null;
-
-  private saleItemSequence = 0;
-  private inventoryMovementSequence = 0;
-  private categoryDisplayById = new Map<string, string>();
 
   private normalizeCategoryId(name: string | undefined | null): string {
-    return (name ?? '')
+    return (name || '')
       .toString()
       .trim()
       .toLowerCase()
       .replace(/\s+/g, ' ');
   }
 
-  private cleanCategoryName(name: string | undefined | null): string {
-    return (name ?? '')
+  private formatCategoryName(name: string): string {
+    const clean = (name || '')
       .toString()
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  private formatCategoryDisplay(name: string): string {
-    const clean = this.cleanCategoryName(name);
+      .trim()
+      .replace(/\s+/g, ' ');
     if (!clean) return '';
     return clean
       .split(' ')
-      .map((word) => (word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : ''))
+      .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
       .join(' ')
       .trim();
   }
 
-  private ensureCategoryCatalogEntry(raw: string): { id: string; name: string } {
-    const normalizedId = this.normalizeCategoryId(raw);
-    if (!normalizedId) return { id: '', name: '' };
-    const formatted = this.formatCategoryDisplay(raw) || this.formatCategoryDisplay(normalizedId) || 'Otros';
-    const existing = this.categoriesById.get(normalizedId);
-    const nowIso = new Date().toISOString();
-    if (existing) {
-      if (formatted && formatted !== existing.name) {
-        existing.name = formatted;
-        existing.updatedAt = nowIso;
-        this.categoriesDirty = true;
-      }
-      this.categoryDisplayById.set(normalizedId, existing.name);
-      return { id: existing.id, name: existing.name };
+  private syncCategoryIndex() {
+    this.categoryIndex = new Map<string, Category>();
+    for (const category of this.categories) {
+      this.categoryIndex.set(category.id, { ...category });
     }
-    const entry: Category = {
+  }
+
+  private ensureCategory(raw: string | undefined | null): Category {
+    const normalizedId = this.normalizeCategoryId(raw);
+    const nowIso = new Date().toISOString();
+    if (!normalizedId) {
+      return {
+        id: 'otros',
+        name: 'Otros',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+    }
+    const existing = this.categoryIndex.get(normalizedId);
+    const displayName = this.formatCategoryName(raw || normalizedId) || 'Otros';
+    if (existing) {
+      if (displayName && existing.name !== displayName) {
+        existing.name = displayName;
+        existing.updatedAt = nowIso;
+        const idx = this.categories.findIndex((cat) => cat.id === existing.id);
+        if (idx >= 0) this.categories[idx] = { ...existing };
+      }
+      return existing;
+    }
+    const newCategory: Category = {
       id: normalizedId,
-      name: formatted,
+      name: displayName,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
-    this.categoriesById.set(normalizedId, entry);
-    this.categoriesDirty = true;
-    this.categoryDisplayById.set(normalizedId, formatted);
-    return { id: entry.id, name: entry.name };
+    this.categories.push(newCategory);
+    this.categoryIndex.set(normalizedId, newCategory);
+    return newCategory;
   }
 
-  private rebuildCategoryCatalog() {
-    this.categoryDisplayById = new Map<string, string>();
+  private rebuildCategoriesFromProducts() {
+    const map = new Map<string, Category>();
     for (const product of this.products) {
-      const source = product.category || product.categoryId || '';
-      const entry = this.ensureCategoryCatalogEntry(source);
-      if (entry.id) {
-        product.categoryId = entry.id;
-        product.category = entry.name;
-      } else {
-        product.categoryId = undefined;
-        product.category = '';
-      }
+      const entry = this.ensureCategory(product.category || product.categoryId);
+      product.categoryId = entry.id;
+      product.category = entry.name;
+      map.set(entry.id, { ...entry });
     }
-    this.syncCategoriesArray();
+    this.categories = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    this.syncCategoryIndex();
   }
 
-  private syncCategoriesArray() {
-    this.categories = Array.from(this.categoriesById.values()).sort((a, b) =>
-      a.name.localeCompare(b.name, 'es')
-    );
-  }
-
-  private async persistCategoriesIfNeeded() {
-    if (!this.categoriesDirty) return;
-    this.syncCategoriesArray();
-    await this.saveCategoriesToDiskSafe();
-    this.categoriesDirty = false;
-  }
-
-  private cleanSku(value: string | undefined | null): string {
-    return (value ?? '').toString().trim().toUpperCase();
-  }
-
-  private cleanName(value: string | undefined | null): string {
-    return this.cleanCategoryName(value) || '';
-  }
-
-  private cleanDescription(value: string | undefined | null): string | undefined {
-    const clean = this.cleanCategoryName(value);
-    return clean || undefined;
-  }
-
-  private cleanStock(value: number | string | undefined | null): number {
-    const num = Number(value ?? 0);
-    if (!Number.isFinite(num)) return 0;
-    return Math.max(0, Math.floor(num));
+  private async persistCategories() {
+    if (!this.categoriesFilePath) return;
+    try {
+      const dir = path.dirname(this.categoriesFilePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(
+        this.categoriesFilePath,
+        JSON.stringify(this.categories, null, 2),
+        'utf-8'
+      );
+    } catch (e) {
+      console.warn('⚠️ Failed to save categories to disk:', e);
+    }
   }
 
   // Productos
   async getProducts(): Promise<Product[]> {
+    if (!this.categories.length && this.products.length) {
+      this.rebuildCategoriesFromProducts();
+    }
     return [...this.products];
   }
 
   async getCategoryCatalog(term?: string): Promise<Category[]> {
-    if (this.categoriesDirty || this.categories.length === 0) {
-      this.syncCategoriesArray();
+    if (!this.categories.length && this.products.length) {
+      this.rebuildCategoriesFromProducts();
     }
-    const query = this.cleanCategoryName(term).toLowerCase();
-    const candidates = this.categories.length
-      ? [...this.categories]
-      : Array.from(this.categoriesById.values());
-    if (!query) {
-      return candidates.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    if (!term) {
+      return [...this.categories].sort((a, b) => a.name.localeCompare(b.name, 'es'));
     }
-    return candidates
-      .filter((cat) => cat.name.toLowerCase().includes(query) || cat.id.includes(query))
+    const q = term.trim().toLowerCase();
+    return this.categories
+      .filter((cat) => cat.name.toLowerCase().includes(q) || cat.id.includes(q))
       .sort((a, b) => a.name.localeCompare(b.name, 'es'));
   }
 
   async createProduct(productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
     const nowIso = new Date().toISOString();
-    const { id: categoryId, name: categoryName } = this.ensureCategoryCatalogEntry(
-      productData.category || productData.categoryId || 'Otros'
-    );
+    const cleanName = (productData.name || '').toString().trim();
+    const cleanSku = (productData.sku || '').toString().trim().toUpperCase();
+    const cleanDescription = productData.description?.toString().trim() || undefined;
+    const cleanStock = Math.max(0, Math.floor(Number(productData.stock || 0)));
+    const cleanPrice = Number(productData.price ?? 0);
+    const categoryEntry = this.ensureCategory(productData.category || productData.categoryId || 'Otros');
     const newProduct: Product = {
-      id: Math.max(...this.products.map((p) => p.id), 0) + 1,
-      sku: this.cleanSku(productData.sku),
-      name: this.cleanName(productData.name),
-      price: Number.isFinite(productData.price) ? Number(productData.price) : 0,
-      stock: this.cleanStock(productData.stock),
-      categoryId: categoryId || undefined,
-      category: categoryName,
-      description: this.cleanDescription(productData.description),
+      id: Math.max(...this.products.map(p => p.id), 0) + 1,
+      sku: cleanSku,
+      name: cleanName,
+      price: Number.isFinite(cleanPrice) ? cleanPrice : 0,
+      stock: cleanStock,
+      category: categoryEntry.name,
+      categoryId: categoryEntry.id,
+      description: cleanDescription,
       createdAt: nowIso,
-      updatedAt: nowIso,
-    } as Product;
+      updatedAt: nowIso
+    };
     this.products.push(newProduct);
-    this.rebuildCategoryCatalog();
-    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategoriesIfNeeded()]);
+    this.rebuildCategoriesFromProducts();
+    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategories()]);
     return newProduct;
   }
 
@@ -189,35 +175,36 @@ class DatabaseService {
     const index = this.products.findIndex(p => p.id === id);
     if (index === -1) return null;
 
-    const current = this.products[index];
-    const patch: Partial<Product> = {};
     const nowIso = new Date().toISOString();
-
-    if (typeof productData.sku === 'string') patch.sku = this.cleanSku(productData.sku);
-    if (typeof productData.name === 'string') patch.name = this.cleanName(productData.name);
-    if (typeof productData.description !== 'undefined') patch.description = this.cleanDescription(productData.description);
-    if (typeof productData.stock !== 'undefined') patch.stock = this.cleanStock(productData.stock);
-    if (typeof productData.price !== 'undefined') patch.price = Number(productData.price);
-
-    if (typeof productData.category !== 'undefined' || typeof productData.categoryId !== 'undefined') {
-      const rawCategory =
-        (typeof productData.category === 'string' && productData.category) ||
-        (typeof productData.categoryId === 'string' && productData.categoryId) ||
-        current.category ||
-        current.categoryId ||
-        '';
-      const entry = this.ensureCategoryCatalogEntry(rawCategory);
-      patch.category = entry.name;
-      patch.categoryId = entry.id || undefined;
-    }
-
-    this.products[index] = {
+    const current = this.products[index];
+    const next: Product = {
       ...current,
-      ...patch,
+      ...productData,
+      sku: productData.sku !== undefined ? (productData.sku || '').toString().trim().toUpperCase() : current.sku,
+      name: productData.name !== undefined ? (productData.name || '').toString().trim() : current.name,
+      price: productData.price !== undefined ? Number(productData.price) || 0 : current.price,
+      stock:
+        productData.stock !== undefined
+          ? Math.max(0, Math.floor(Number(productData.stock)))
+          : current.stock,
+      description:
+        productData.description !== undefined
+          ? (productData.description || '').toString().trim() || undefined
+          : current.description,
       updatedAt: nowIso,
-    } as Product;
-    this.rebuildCategoryCatalog();
-    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategoriesIfNeeded()]);
+    };
+    if (productData.category !== undefined || productData.categoryId !== undefined) {
+      const entry = this.ensureCategory(productData.category || productData.categoryId || current.category);
+      next.category = entry.name;
+      next.categoryId = entry.id;
+    } else if (!next.categoryId) {
+      const entry = this.ensureCategory(next.category);
+      next.category = entry.name;
+      next.categoryId = entry.id;
+    }
+    this.products[index] = next;
+    this.rebuildCategoriesFromProducts();
+    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategories()]);
     return this.products[index];
   }
 
@@ -225,10 +212,10 @@ class DatabaseService {
     const index = this.products.findIndex(p => p.id === id);
     if (index === -1) return false;
 
-    this.products.splice(index, 1);
-    this.rebuildCategoryCatalog();
-    await Promise.all([this.saveProductsToDiskSafe(), this.persistCategoriesIfNeeded()]);
-    return true;
+  this.products.splice(index, 1);
+  this.rebuildCategoriesFromProducts();
+  await Promise.all([this.saveProductsToDiskSafe(), this.persistCategories()]);
+  return true;
   }
 
   // Clientes
@@ -284,129 +271,123 @@ class DatabaseService {
     });
   }
 
-  async createSale(saleData: Omit<Sale, 'id' | 'createdAt' | 'updatedAt'> & { createdAt?: string }): Promise<Sale> {
+  async getSalesByCustomer(customerId: number): Promise<Sale[]> {
+    const id = Number(customerId);
+    if (!Number.isInteger(id) || id <= 0) return [];
+    return this.sales
+      .filter((sale) => sale.customerId === id)
+      .map((sale) => ({
+        ...sale,
+        items: sale.items.map((item) => ({ ...item })),
+        inventoryMovements: (sale.inventoryMovements || []).map((mov) => ({ ...mov })),
+      }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async createSale(
+    saleData: Omit<Sale, 'id' | 'createdAt' | 'updatedAt' | 'items' | 'inventoryMovements'> & {
+      createdAt?: string;
+      items: Array<Partial<Sale['items'][number]>>;
+    }
+  ): Promise<Sale> {
     if (!Array.isArray(saleData.items) || saleData.items.length === 0) {
-      throw new Error('INVALID_ITEM');
+      const err = new Error('INVALID_ITEM');
+      (err as any).code = 'INVALID_ITEM';
+      throw err;
     }
 
-    const round2 = (value: number) => Math.round(value * 100) / 100;
     const nowIso = new Date().toISOString();
     const createdAt = saleData.createdAt || nowIso;
 
     const productsClone = this.products.map((p) => ({ ...p }));
-    let tempItemSeq = this.saleItemSequence;
-    let tempMovementSeq = this.inventoryMovementSequence;
+    const findProductClone = (id?: number) =>
+      typeof id === 'number' && id > 0 ? productsClone.find((p) => p.id === id) : undefined;
 
-    const movementDrafts: InventoryMovement[] = [];
+    const currentMaxSaleId = Math.max(0, ...this.sales.map((s) => s.id));
+    const currentMaxItemId = this.sales.reduce((max, sale) => {
+      const localMax = Math.max(0, ...sale.items.map((item) => item.id || 0));
+      return Math.max(max, localMax);
+    }, 0);
+    const currentMaxMovementId = this.sales.reduce((max, sale) => {
+      const localMax = Math.max(0, ...(sale.inventoryMovements || []).map((mov) => mov.id || 0));
+      return Math.max(max, localMax);
+    }, 0);
+
+    let nextItemId = currentMaxItemId;
+    let nextMovementId = currentMaxMovementId;
+
+    let customerId: number | undefined;
+    if (saleData.customerId !== undefined && saleData.customerId !== null) {
+      const candidate = Number(saleData.customerId);
+      if (!Number.isInteger(candidate) || candidate <= 0 || !this.customers.some((c) => c.id === candidate)) {
+        const err = new Error('CUSTOMER_NOT_FOUND');
+        (err as any).code = 'CUSTOMER_NOT_FOUND';
+        throw err;
+      }
+      customerId = candidate;
+    }
+
+    type ItemMeta = {
+      rawIndex: number;
+      product?: Product;
+      categoryId: string;
+      categoryName: string;
+      quantity: number;
+      unitPrice: number;
+      subtotal: number;
+      notes?: string;
+      type: 'product' | 'manual';
+    };
+
+    const metas: ItemMeta[] = saleData.items.map((item, index) => {
+      const quantity = Math.floor(Number(item.quantity ?? 0));
+      const unitPrice = Number(item.unitPrice ?? 0);
+      if (!Number.isFinite(quantity) || quantity < 1 || !Number.isFinite(unitPrice) || unitPrice <= 0) {
+        const err = new Error('INVALID_ITEM');
+        (err as any).code = 'INVALID_ITEM';
+        (err as any).details = item;
+        throw err;
+      }
+      const product = findProductClone(item.productId as number);
+      const categorySource =
+        item.categoryName || item.categoryId || (product ? product.category || product.categoryId : 'Otros');
+      const categoryEntry = this.ensureCategory(categorySource || 'Otros');
+      const notes = typeof item.notes === 'string' ? item.notes.trim() || undefined : undefined;
+      return {
+        rawIndex: index,
+        product,
+        categoryId: categoryEntry.id,
+        categoryName: categoryEntry.name,
+        quantity,
+        unitPrice,
+        subtotal: +(unitPrice * quantity).toFixed(2),
+        notes,
+        type: product ? 'product' : 'manual',
+      };
+    });
+
+    const movements: InventoryMovement[] = [];
+    const resolvedItems: Sale['items'] = [];
+
+    const pushMovement = (product: Product, meta: ItemMeta, quantity: number) => {
+      if (quantity <= 0) return;
+      movements.push({
+        id: ++nextMovementId,
+        saleId: 0,
+        productId: product.id,
+        categoryId: meta.categoryId,
+        categoryName: meta.categoryName,
+        quantity,
+        type: 'salida',
+        createdAt: nowIso,
+        notes: saleData.notes?.toString().trim() || undefined,
+      });
+    };
 
     try {
-      let customerId: number | undefined;
-      if (typeof saleData.customerId !== 'undefined' && saleData.customerId !== null) {
-        const candidateId = Number(saleData.customerId);
-        if (!Number.isInteger(candidateId) || candidateId <= 0 || !this.customers.some((c) => c.id === candidateId)) {
-          const err = new Error('CUSTOMER_NOT_FOUND');
-          (err as any).code = 'CUSTOMER_NOT_FOUND';
-          throw err;
-        }
-        customerId = candidateId;
-      }
-
-      type ItemMeta = {
-        order: number;
-        quantity: number;
-        unitPrice: number;
-        subtotal: number;
-        product?: typeof productsClone[number];
-        categoryId: string;
-        categoryName: string;
-        notes?: string;
-        type: 'product' | 'manual';
-      };
-
-      const metas: ItemMeta[] = saleData.items.map((rawItem, index) => {
-        const quantity = Math.max(0, Math.floor(Number(rawItem?.quantity ?? 0)));
-        const unitPrice = round2(Number(rawItem?.unitPrice ?? 0));
-        if (!quantity || !Number.isFinite(unitPrice) || unitPrice <= 0) {
-          const err = new Error('INVALID_ITEM');
-          (err as any).details = rawItem;
-          throw err;
-        }
-
-        let product: typeof productsClone[number] | undefined;
-        if (typeof rawItem?.productId === 'number' && rawItem.productId > 0) {
-          product = productsClone.find((p) => p.id === rawItem.productId);
-          if (!product) {
-            const err = new Error('INVALID_ITEM');
-            (err as any).details = rawItem;
-            throw err;
-          }
-        }
-
-        const rawCategory =
-          typeof rawItem?.categoryName === 'string' && rawItem.categoryName.trim()
-            ? rawItem.categoryName.trim()
-            : typeof rawItem?.categoryId === 'string' && rawItem.categoryId.trim()
-              ? rawItem.categoryId.trim()
-              : '';
-
-        let categoryId = this.normalizeCategoryId(rawItem?.categoryId || rawCategory);
-        if (product && !categoryId) {
-          categoryId = this.normalizeCategoryId(product.category);
-        }
-        if (!categoryId) {
-          const err = new Error('INVALID_ITEM');
-          (err as any).details = rawItem;
-          throw err;
-        }
-
-        const catalogName = this.categoryDisplayById.get(categoryId);
-        let categoryName = catalogName || rawCategory;
-        if (product && !categoryName) {
-          categoryName = product.category || catalogName || 'Sin categoría';
-        }
-        if (!categoryName) categoryName = categoryId;
-
-        const notes = typeof rawItem?.notes === 'string' && rawItem.notes.trim() ? rawItem.notes.trim() : undefined;
-        const type: 'product' | 'manual' = product ? 'product' : rawItem?.type === 'manual' ? 'manual' : 'manual';
-
-        return {
-          order: index,
-          quantity,
-          unitPrice,
-          subtotal: round2(unitPrice * quantity),
-          product,
-          categoryId,
-          categoryName,
-          notes,
-          type,
-        };
-      });
-
-      const itemsWithOrder: Array<{ order: number; item: Sale['items'][number] }> = [];
-
-      const pushMovement = (
-        product: typeof productsClone[number],
-        categoryId: string,
-        categoryName: string,
-        quantity: number,
-      ) => {
-        movementDrafts.push({
-          id: 0,
-          saleId: 0,
-          productId: product.id,
-          categoryId,
-          categoryName,
-          quantity,
-          type: 'salida',
-          createdAt: nowIso,
-          notes: typeof saleData.notes === 'string' ? saleData.notes : undefined,
-        });
-      };
-
-      // Primero procesar líneas asociadas a productos específicos para reservar su stock
       for (const meta of metas.filter((m) => m.product)) {
         const product = meta.product!;
-        const available = Math.max(0, product.stock ?? 0);
+        const available = Math.max(0, Number(product.stock ?? 0));
         if (available < meta.quantity) {
           const err = new Error('INSUFFICIENT_STOCK');
           (err as any).code = 'INSUFFICIENT_STOCK';
@@ -415,106 +396,84 @@ class DatabaseService {
         }
         product.stock = available - meta.quantity;
         product.updatedAt = nowIso;
-        pushMovement(product, meta.categoryId, meta.categoryName, meta.quantity);
-        itemsWithOrder.push({
-          order: meta.order,
-          item: {
-            id: ++tempItemSeq,
-            saleId: 0,
-            productId: product.id,
-            categoryId: meta.categoryId,
-            categoryName: meta.categoryName,
-            quantity: meta.quantity,
-            unitPrice: meta.unitPrice,
-            subtotal: meta.subtotal,
-            notes: meta.notes,
-            type: 'product',
-          },
+        pushMovement(product, meta, meta.quantity);
+        resolvedItems.push({
+          id: ++nextItemId,
+          saleId: 0,
+          productId: product.id,
+          categoryId: meta.categoryId,
+          categoryName: meta.categoryName,
+          quantity: meta.quantity,
+          unitPrice: meta.unitPrice,
+          subtotal: meta.subtotal,
+          notes: meta.notes,
+          type: 'product',
         });
       }
 
-      // Luego procesar líneas manuales por categoría usando el stock restante
       for (const meta of metas.filter((m) => !m.product)) {
-        const candidates = productsClone.filter((p) => this.normalizeCategoryId(p.category) === meta.categoryId);
-        const totalStock = candidates.reduce((sum, p) => sum + Math.max(0, p.stock ?? 0), 0);
-        if (totalStock < meta.quantity) {
+        const candidates = productsClone
+          .filter((p) => this.normalizeCategoryId(p.category || p.categoryId) === meta.categoryId)
+          .sort((a, b) => (b.stock ?? 0) - (a.stock ?? 0));
+        const totalAvailable = candidates.reduce((sum, product) => sum + Math.max(0, Number(product.stock ?? 0)), 0);
+        if (totalAvailable < meta.quantity) {
           const err = new Error('INSUFFICIENT_STOCK');
           (err as any).code = 'INSUFFICIENT_STOCK';
           (err as any).categoryName = meta.categoryName;
           throw err;
         }
-
         let remaining = meta.quantity;
-        const sorted = [...candidates].sort((a, b) => (b.stock ?? 0) - (a.stock ?? 0));
-        for (const candidate of sorted) {
+        for (const candidate of candidates) {
           if (remaining <= 0) break;
-          const available = Math.max(0, candidate.stock ?? 0);
+          const available = Math.max(0, Number(candidate.stock ?? 0));
           if (!available) continue;
           const take = Math.min(available, remaining);
           candidate.stock = available - take;
           candidate.updatedAt = nowIso;
           remaining -= take;
-          pushMovement(candidate, meta.categoryId, meta.categoryName, take);
+          pushMovement(candidate, meta, take);
         }
-
-        itemsWithOrder.push({
-          order: meta.order,
-          item: {
-            id: ++tempItemSeq,
-            saleId: 0,
-            productId: undefined,
-            categoryId: meta.categoryId,
-            categoryName: meta.categoryName,
-            quantity: meta.quantity,
-            unitPrice: meta.unitPrice,
-            subtotal: meta.subtotal,
-            notes: meta.notes,
-            type: 'manual',
-          },
+        resolvedItems.push({
+          id: ++nextItemId,
+          saleId: 0,
+          productId: undefined,
+          categoryId: meta.categoryId,
+          categoryName: meta.categoryName,
+          quantity: meta.quantity,
+          unitPrice: meta.unitPrice,
+          subtotal: meta.subtotal,
+          notes: meta.notes,
+          type: 'manual',
         });
       }
 
-      const sanitizedItems = itemsWithOrder
-        .sort((a, b) => a.order - b.order)
-        .map((entry) => entry.item);
-
-      const subtotalValue = round2(sanitizedItems.reduce((sum, item) => sum + (item.subtotal || 0), 0));
-      let discountValue = round2(Number(saleData.discount ?? 0));
-      if (!Number.isFinite(discountValue) || discountValue < 0) discountValue = 0;
-      if (discountValue > subtotalValue) discountValue = subtotalValue;
-      let taxValue = round2(Number(saleData.tax ?? 0));
-      if (!Number.isFinite(taxValue) || taxValue < 0) taxValue = 0;
-      const totalValue = round2(subtotalValue - discountValue + taxValue);
+      const subtotal = resolvedItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+      let discount = Number(saleData.discount ?? 0);
+      if (!Number.isFinite(discount) || discount < 0) discount = 0;
+      if (discount > subtotal) discount = subtotal;
+      let tax = Number(saleData.tax ?? 0);
+      if (!Number.isFinite(tax) || tax < 0) tax = 0;
+      const total = +(subtotal - discount + tax);
 
       const paymentMethod: Sale['paymentMethod'] =
         saleData.paymentMethod === 'Tarjeta' || saleData.paymentMethod === 'Transferencia'
           ? saleData.paymentMethod
           : 'Efectivo';
 
-      const newSaleId = Math.max(0, ...this.sales.map((s) => s.id)) + 1;
-      const itemsWithSaleId = sanitizedItems.map((item) => ({ ...item, saleId: newSaleId }));
-
-      let movementSeq = tempMovementSeq;
-      const movements = movementDrafts
-        .filter((mov) => mov.quantity > 0)
-        .map((mov) => ({ ...mov, id: ++movementSeq, saleId: newSaleId, createdAt: mov.createdAt || nowIso }));
-
-      const notes = typeof saleData.notes === 'string' && saleData.notes.trim() ? saleData.notes.trim() : undefined;
-      const appliedLevel =
-        saleData.appliedDiscountLevel && ['Bronze', 'Silver', 'Gold', 'Platinum'].includes(saleData.appliedDiscountLevel)
-          ? saleData.appliedDiscountLevel
-          : undefined;
-      const appliedPercent = typeof saleData.appliedDiscountPercent === 'number'
-        ? Number(saleData.appliedDiscountPercent)
-        : undefined;
+      const saleId = currentMaxSaleId + 1;
+      const itemsWithSaleId = resolvedItems.map((item) => ({ ...item, saleId }));
+      const movementsWithSaleId = movements.map((movement) => ({ ...movement, saleId }));
+      const notes = typeof saleData.notes === 'string' ? saleData.notes.trim() || undefined : undefined;
+      const appliedLevel = saleData.appliedDiscountLevel;
+      const appliedPercent = saleData.appliedDiscountPercent;
 
       const newSale: Sale = {
-        id: newSaleId,
+        id: saleId,
         customerId,
-        subtotal: subtotalValue,
-        discount: discountValue,
-        tax: taxValue,
-        total: totalValue,
+        subtotal,
+        discount,
+        tax,
+        total,
         paymentMethod,
         status: 'Completada',
         createdAt,
@@ -523,45 +482,30 @@ class DatabaseService {
         appliedDiscountLevel: appliedLevel,
         appliedDiscountPercent: appliedPercent,
         notes,
-        inventoryMovements: movements,
+        inventoryMovements: movementsWithSaleId,
       };
 
       this.products = productsClone;
+      this.rebuildCategoriesFromProducts();
       this.sales.push(newSale);
-      this.saleItemSequence = tempItemSeq;
-      this.inventoryMovementSequence = movementSeq;
-
       await Promise.all([
         this.saveSalesToDiskSafe(),
-        this.saveProductsToDiskSafe()
+        this.saveProductsToDiskSafe(),
+        this.persistCategories(),
       ]);
       return newSale;
     } catch (error: any) {
-      if (error?.code === 'CUSTOMER_NOT_FOUND' || error?.code === 'INSUFFICIENT_STOCK' || error?.message === 'INVALID_ITEM') {
+      if (error?.code === 'CUSTOMER_NOT_FOUND' || error?.code === 'INSUFFICIENT_STOCK' || error?.code === 'INVALID_ITEM') {
         throw error;
       }
       console.error('Failed to confirm sale', {
-        error: error?.message || error,
+        message: error?.message || error,
         customerId: saleData?.customerId,
-        items: Array.isArray(saleData?.items) ? saleData.items.length : 0,
       });
       const fail = new Error('SALE_CONFIRMATION_FAILED');
       (fail as any).code = 'SALE_CONFIRMATION_FAILED';
       throw fail;
     }
-  }
-
-  async getSalesByCustomer(customerId: number): Promise<Sale[]> {
-    const id = Number(customerId);
-    if (!Number.isInteger(id) || id <= 0) return [];
-    return this.sales
-      .filter((sale) => sale.customerId === id)
-      .map((sale) => ({
-        ...sale,
-        items: (sale.items || []).map((item) => ({ ...item })),
-        inventoryMovements: (sale.inventoryMovements || []).map((mov) => ({ ...mov })),
-      }))
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
   async updateSale(id: number, saleData: Partial<Sale>): Promise<Sale | null> {
@@ -584,46 +528,25 @@ class DatabaseService {
 
   private restoreStockFromSale(sale: Sale) {
     const nowIso = new Date().toISOString();
-    let restored = false;
-
-    if (Array.isArray(sale?.inventoryMovements)) {
-      for (const mov of sale.inventoryMovements) {
-        if (!mov || mov.type !== 'salida') continue;
-        const qty = Math.max(0, Number(mov.quantity ?? 0));
-        if (!qty) continue;
-        if (typeof mov.productId === 'number') {
-          const product = this.products.find((p) => p.id === mov.productId);
-          if (product) {
-            product.stock += qty;
-            product.updatedAt = nowIso;
-            restored = true;
-          }
-        }
+    if (Array.isArray(sale.inventoryMovements) && sale.inventoryMovements.length > 0) {
+      for (const movement of sale.inventoryMovements) {
+        if (!movement || movement.type !== 'salida') continue;
+        if (!movement.productId) continue;
+        const product = this.products.find((p) => p.id === movement.productId);
+        if (!product) continue;
+        const qty = Math.max(0, Number(movement.quantity ?? 0));
+        product.stock += qty;
+        product.updatedAt = nowIso;
       }
+      return;
     }
-
-    if (restored) return;
-
     for (const item of sale.items || []) {
+      if (!item || !item.productId) continue;
+      const product = this.products.find((p) => p.id === item.productId);
+      if (!product) continue;
       const qty = Math.max(0, Number(item.quantity ?? 0));
-      if (!qty) continue;
-      if (item.productId) {
-        const product = this.products.find((p) => p.id === item.productId);
-        if (product) {
-          product.stock += qty;
-          product.updatedAt = nowIso;
-          restored = true;
-        }
-      } else if (item.categoryId || item.categoryName) {
-        const categoryId = this.normalizeCategoryId(item.categoryId || item.categoryName || '');
-        if (!categoryId) continue;
-        const candidate = this.products.find((p) => this.normalizeCategoryId(p.category) === categoryId);
-        if (candidate) {
-          candidate.stock += qty;
-          candidate.updatedAt = nowIso;
-          restored = true;
-        }
-      }
+      product.stock += qty;
+      product.updatedAt = nowIso;
     }
   }
 
@@ -741,10 +664,10 @@ class DatabaseService {
       const userData = app.getPath('userData');
       this.settingsFilePath = path.join(userData, 'settings.json');
       this.productsFilePath = path.join(userData, 'products.json');
+      this.categoriesFilePath = path.join(userData, 'categories.json');
       this.customersFilePath = path.join(userData, 'customers.json');
       this.salesFilePath = path.join(userData, 'sales.json');
       this.cashSessionsFilePath = path.join(userData, 'cash_sessions.json');
-      this.categoriesFilePath = path.join(userData, 'categories.json');
       await this.loadSettingsFromDiskSafe();
       await Promise.all([
         this.loadCategoriesFromDiskSafe(),
@@ -753,8 +676,9 @@ class DatabaseService {
         this.loadSalesFromDiskSafe(),
         this.loadCashSessionsFromDiskSafe()
       ]);
-      this.seedDefaultCategories();
-      await this.persistCategoriesIfNeeded();
+      if (!this.categories.length && this.products.length) {
+        this.rebuildCategoriesFromProducts();
+      }
     } catch (e) {
       console.warn('⚠️ Could not prepare settings persistence:', e);
     }
@@ -805,6 +729,30 @@ class DatabaseService {
   }
 
   // ===== Persistence helpers for entities =====
+  private async loadCategoriesFromDiskSafe() {
+    if (!this.categoriesFilePath) return;
+    try {
+      if (fs.existsSync(this.categoriesFilePath)) {
+        const raw = await fs.promises.readFile(this.categoriesFilePath, 'utf-8');
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          this.categories = arr
+            .filter((c) => c && typeof c.id === 'string')
+            .map((c) => ({
+              id: this.normalizeCategoryId(c.id),
+              name: this.formatCategoryName(c.name || c.id),
+              createdAt: c.createdAt || new Date().toISOString(),
+              updatedAt: c.updatedAt || new Date().toISOString(),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+          this.syncCategoryIndex();
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Failed to load categories from disk:', e);
+    }
+  }
+
   private async loadProductsFromDiskSafe() {
     if (!this.productsFilePath) return;
     try {
@@ -812,25 +760,21 @@ class DatabaseService {
         const raw = await fs.promises.readFile(this.productsFilePath, 'utf-8');
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
-          this.categoryDisplayById = new Map<string, string>();
           this.products = arr
             .filter(p => p && typeof p.name === 'string')
-            .map((p, idx) => {
-              const { id, name } = this.ensureCategoryCatalogEntry(p.category ?? p.categoryId ?? '');
-              return {
-                id: typeof p.id === 'number' ? p.id : idx + 1,
-                sku: this.cleanSku(p.sku),
-                name: this.cleanName(p.name),
-                price: Number(p.price ?? 0),
-                stock: this.cleanStock(p.stock),
-                categoryId: id || undefined,
-                category: name,
-                description: this.cleanDescription(p.description),
-                createdAt: p.createdAt || new Date().toISOString(),
-                updatedAt: p.updatedAt || new Date().toISOString()
-              } as Product;
-            });
-          this.rebuildCategoryCatalog();
+            .map((p, idx) => ({
+              id: typeof p.id === 'number' ? p.id : idx + 1,
+              sku: String(p.sku ?? ''),
+              name: String(p.name ?? ''),
+              price: Number(p.price ?? 0),
+              stock: Number(p.stock ?? 0),
+              category: String(p.category ?? ''),
+              categoryId: typeof p.categoryId === 'string' ? this.normalizeCategoryId(p.categoryId) : undefined,
+              description: typeof p.description === 'string' ? p.description : undefined,
+              createdAt: p.createdAt || new Date().toISOString(),
+              updatedAt: p.updatedAt || new Date().toISOString()
+            }));
+          this.rebuildCategoriesFromProducts();
         }
       }
     } catch (e) {
@@ -847,58 +791,6 @@ class DatabaseService {
     } catch (e) {
       console.warn('⚠️ Failed to save products to disk:', e);
     }
-  }
-
-  private async loadCategoriesFromDiskSafe() {
-    if (!this.categoriesFilePath) return;
-    try {
-      if (fs.existsSync(this.categoriesFilePath)) {
-        const raw = await fs.promises.readFile(this.categoriesFilePath, 'utf-8');
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-          this.categoriesById = new Map<string, Category>();
-          arr
-            .filter((c) => c && typeof c.name === 'string')
-            .forEach((c) => {
-              const entry: Category = {
-                id: this.normalizeCategoryId(c.id || c.name),
-                name: this.formatCategoryDisplay(c.name),
-                createdAt: c.createdAt || new Date().toISOString(),
-                updatedAt: c.updatedAt || new Date().toISOString(),
-              };
-              if (entry.id) {
-                this.categoriesById.set(entry.id, entry);
-                this.categoryDisplayById.set(entry.id, entry.name);
-              }
-            });
-          this.syncCategoriesArray();
-          this.categoriesDirty = false;
-        }
-      }
-    } catch (e) {
-      console.warn('⚠️ Failed to load categories from disk:', e);
-    }
-  }
-
-  private async saveCategoriesToDiskSafe() {
-    if (!this.categoriesFilePath) return;
-    try {
-      const dir = path.dirname(this.categoriesFilePath);
-      await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(this.categoriesFilePath, JSON.stringify(this.categories, null, 2), 'utf-8');
-    } catch (e) {
-      console.warn('⚠️ Failed to save categories to disk:', e);
-    }
-  }
-
-  private seedDefaultCategories() {
-    const defaults = ['Anillos', 'Collares', 'Aretes', 'Pulseras', 'Relojes', 'Otros'];
-    defaults.forEach((name) => {
-      const entry = this.ensureCategoryCatalogEntry(name);
-      if (entry.id) {
-        this.categoryDisplayById.set(entry.id, entry.name);
-      }
-    });
   }
 
   private async loadCustomersFromDiskSafe() {
@@ -958,93 +850,48 @@ class DatabaseService {
         const raw = await fs.promises.readFile(this.salesFilePath, 'utf-8');
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
-          let maxItemId = this.saleItemSequence;
-          let maxMovementId = this.inventoryMovementSequence;
           this.sales = arr
             .filter(s => s && Array.isArray(s.items))
-            .map((s, idx) => {
-              const saleId = typeof s.id === 'number' ? s.id : idx + 1;
-              const items = Array.isArray(s.items)
-                ? s.items.map((it: any, i: number) => {
-                    const itemId = typeof it?.id === 'number' ? it.id : i + 1;
-                    if (itemId > maxItemId) maxItemId = itemId;
-                    const productId = typeof it?.productId === 'number' && it.productId > 0 ? it.productId : undefined;
-                    const quantity = Math.max(0, Math.floor(Number(it?.quantity ?? 0)));
-                    const unitPrice = Number(it?.unitPrice ?? 0);
-                    const subtotal = Number(it?.subtotal ?? quantity * unitPrice);
-                    const categoryId = typeof it?.categoryId === 'string' && it.categoryId.trim()
-                      ? this.normalizeCategoryId(it.categoryId)
-                      : undefined;
-                    const categoryName = typeof it?.categoryName === 'string' && it.categoryName.trim()
-                      ? it.categoryName.trim()
-                      : undefined;
-                    const notes = typeof it?.notes === 'string' && it.notes.trim() ? it.notes.trim() : undefined;
-                    const type = it?.type === 'manual' ? 'manual' : 'product';
-                    return {
-                      id: itemId,
-                      saleId,
-                      productId,
-                      categoryId,
-                      categoryName,
-                      quantity,
-                      unitPrice,
-                      subtotal,
-                      notes,
-                      type,
-                    };
-                  })
-                : [];
-
-              const movements = Array.isArray(s.inventoryMovements)
-                ? s.inventoryMovements
-                    .filter((mov: any) => mov && typeof mov.quantity !== 'undefined')
-                    .map((mov: any, j: number) => {
-                      const movementId = typeof mov?.id === 'number' ? mov.id : j + 1;
-                      if (movementId > maxMovementId) maxMovementId = movementId;
-                      const productId = typeof mov?.productId === 'number' ? mov.productId : undefined;
-                      const categoryId = typeof mov?.categoryId === 'string' && mov.categoryId.trim()
-                        ? this.normalizeCategoryId(mov.categoryId)
-                        : undefined;
-                      const categoryName = typeof mov?.categoryName === 'string' && mov.categoryName.trim()
-                        ? mov.categoryName.trim()
-                        : undefined;
-                      const notes = typeof mov?.notes === 'string' && mov.notes.trim() ? mov.notes.trim() : undefined;
-                      const type = mov?.type === 'entrada' || mov?.type === 'ajuste' ? mov.type : 'salida';
-                      const quantity = Math.max(0, Number(mov?.quantity ?? 0));
-                      return {
-                        id: movementId,
-                        saleId,
-                        productId,
-                        categoryId,
-                        categoryName,
-                        quantity,
-                        type,
-                        createdAt: mov?.createdAt || new Date().toISOString(),
-                        notes,
-                      } as InventoryMovement;
-                    })
-                : [];
-
-              return {
-                id: saleId,
-                customerId: typeof s.customerId === 'number' ? s.customerId : undefined,
-                subtotal: Number(s.subtotal ?? 0),
-                discount: Number(s.discount ?? 0),
-                tax: Number(s.tax ?? 0),
-                total: Number(s.total ?? 0),
-                paymentMethod: (s.paymentMethod === 'Tarjeta' || s.paymentMethod === 'Transferencia') ? s.paymentMethod : 'Efectivo',
-                status: (s.status === 'Cancelada' || s.status === 'Pendiente') ? s.status : 'Completada',
-                createdAt: s.createdAt || new Date().toISOString(),
-                updatedAt: s.updatedAt || new Date().toISOString(),
-                items,
-                appliedDiscountLevel: ['Bronze','Silver','Gold','Platinum'].includes(s.appliedDiscountLevel) ? s.appliedDiscountLevel : undefined,
-                appliedDiscountPercent: typeof s.appliedDiscountPercent === 'number' ? Number(s.appliedDiscountPercent) : undefined,
-                notes: typeof s.notes === 'string' && s.notes.trim() ? s.notes.trim() : undefined,
-                inventoryMovements: movements,
-              } as Sale;
-            });
-          this.saleItemSequence = maxItemId;
-          this.inventoryMovementSequence = maxMovementId;
+            .map((s, idx) => ({
+              id: typeof s.id === 'number' ? s.id : idx + 1,
+              customerId: typeof s.customerId === 'number' ? s.customerId : undefined,
+              subtotal: Number(s.subtotal ?? 0),
+              discount: Number(s.discount ?? 0),
+              tax: Number(s.tax ?? 0),
+              total: Number(s.total ?? 0),
+              paymentMethod: (s.paymentMethod === 'Tarjeta' || s.paymentMethod === 'Transferencia') ? s.paymentMethod : 'Efectivo',
+              status: (s.status === 'Cancelada' || s.status === 'Pendiente') ? s.status : 'Completada',
+              createdAt: s.createdAt || new Date().toISOString(),
+              updatedAt: s.updatedAt || new Date().toISOString(),
+              items: Array.isArray(s.items) ? s.items.map((it: any, i: number) => ({
+                id: typeof it.id === 'number' ? it.id : i + 1,
+                saleId: typeof it.saleId === 'number' ? it.saleId : (typeof s.id === 'number' ? s.id : idx + 1),
+                productId: typeof it.productId === 'number' ? it.productId : undefined,
+                categoryId: typeof it.categoryId === 'string' ? this.normalizeCategoryId(it.categoryId) : undefined,
+                categoryName: typeof it.categoryName === 'string' ? this.formatCategoryName(it.categoryName) : undefined,
+                quantity: Math.max(0, Number(it.quantity ?? 0)),
+                unitPrice: Number(it.unitPrice ?? 0),
+                subtotal: Number(it.subtotal ?? (Number(it.quantity ?? 0) * Number(it.unitPrice ?? 0))),
+                notes: typeof it.notes === 'string' ? it.notes : undefined,
+                type: it.type === 'product' ? 'product' : it.type === 'manual' ? 'manual' : undefined,
+              })) : [],
+              appliedDiscountLevel: ['Bronze','Silver','Gold','Platinum'].includes(s.appliedDiscountLevel) ? s.appliedDiscountLevel : undefined,
+              appliedDiscountPercent: typeof s.appliedDiscountPercent === 'number' ? Number(s.appliedDiscountPercent) : undefined,
+              notes: typeof s.notes === 'string' ? s.notes : undefined,
+              inventoryMovements: Array.isArray(s.inventoryMovements)
+                ? s.inventoryMovements.map((mov: any, m: number) => ({
+                    id: typeof mov.id === 'number' ? mov.id : m + 1,
+                    saleId: typeof mov.saleId === 'number' ? mov.saleId : (typeof s.id === 'number' ? s.id : idx + 1),
+                    productId: typeof mov.productId === 'number' ? mov.productId : undefined,
+                    categoryId: typeof mov.categoryId === 'string' ? this.normalizeCategoryId(mov.categoryId) : undefined,
+                    categoryName: typeof mov.categoryName === 'string' ? this.formatCategoryName(mov.categoryName) : undefined,
+                    quantity: Math.max(0, Number(mov.quantity ?? 0)),
+                    type: mov.type === 'entrada' || mov.type === 'ajuste' ? mov.type : 'salida',
+                    createdAt: mov.createdAt || new Date().toISOString(),
+                    notes: typeof mov.notes === 'string' ? mov.notes : undefined,
+                  }))
+                : [],
+            }));
         }
       }
     } catch (e) {

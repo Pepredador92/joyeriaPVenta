@@ -1,102 +1,20 @@
-import { Category, CategoryOption, Product } from '../../shared/types';
+import { Category, Product } from '../../shared/types';
 
 // Tipos
 export type Producto = Product;
 export type ProductoCreateInput = Omit<Product, 'id' | 'createdAt' | 'updatedAt'>;
 export type ProductoUpdateInput = Partial<Omit<Product, 'id' | 'createdAt' | 'updatedAt'>>;
 
-// Catálogo base de categorías
-export const defaultCategories = ['Anillos', 'Collares', 'Aretes', 'Pulseras', 'Relojes', 'Otros'] as const;
-
-const normalizeCategoryId = (name: string) => name.replace(/\s+/g, ' ').trim().toLowerCase();
-
-const formatCategoryName = (name: string) => {
-  const clean = name.replace(/\s+/g, ' ').trim();
-  if (!clean) return '';
-  return clean
-    .split(' ')
-    .map((word) => (word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : ''))
-    .join(' ')
-    .trim();
+const normalizeCategory = (value: string) => (value || '').toString().trim();
+const normalizeName = (value: string) => (value || '').toString().trim();
+const normalizeDescription = (value?: string | null) => {
+  const clean = (value ?? '').toString().trim();
+  return clean || undefined;
 };
 
-const fallbackCategory: CategoryOption = { id: 'otros', name: 'Otros' };
-
-const buildCategoryOption = (raw: string): CategoryOption => {
-  const formatted = formatCategoryName(raw);
-  const id = normalizeCategoryId(formatted || raw);
-  if (!id) return fallbackCategory;
-  return { id, name: formatted || fallbackCategory.name };
-};
-
-export function toCategoryOption(name: string): CategoryOption {
-  return buildCategoryOption(name);
-}
-
-export async function loadCategoryCatalog(term = ''): Promise<CategoryOption[]> {
-  try {
-    if (!(window as any).electronAPI?.getCategoryCatalog) {
-      const fallbackProducts = await loadProductos();
-      return getCategoryOptions(fallbackProducts);
-    }
-    const rows = (await (window as any).electronAPI.getCategoryCatalog(term)) as Category[];
-    if (!Array.isArray(rows)) return [];
-    const map = new Map<string, CategoryOption>();
-    rows.forEach((row) => {
-      const option = buildCategoryOption(row?.name || row?.id || '');
-      if (option.id) {
-        map.set(option.id, option);
-      }
-    });
-    if (map.size === 0 && !term) {
-      defaultCategories.forEach((cat) => {
-        const option = buildCategoryOption(cat);
-        map.set(option.id, option);
-      });
-    }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-  } catch (error) {
-    console.error('Error loading category catalog:', error);
-    if (!term) {
-      return defaultCategories.map((cat) => buildCategoryOption(cat));
-    }
-    return [];
-  }
-}
-
-export function getCategoryOptions(products: Product[]): CategoryOption[] {
-  const map = new Map<string, CategoryOption>();
-  defaultCategories.forEach((cat) => {
-    const option = buildCategoryOption(cat);
-    map.set(option.id, option);
-  });
-  products.forEach((product) => {
-    const raw = (product?.category && product.category.trim()) || product?.categoryId || '';
-    if (!raw) return;
-    const option = buildCategoryOption(raw);
-    if (!map.has(option.id)) {
-      map.set(option.id, option);
-    }
-  });
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-}
-
-export function filterCategorySuggestions(options: CategoryOption[], term: string, limit = 8): CategoryOption[] {
-  const q = term.replace(/\s+/g, ' ').trim().toLowerCase();
-  if (!q) return options.slice(0, limit);
-  return options
-    .map((opt) => {
-      const nameLower = opt.name.toLowerCase();
-      const index = nameLower.indexOf(q);
-      return { opt, index: index === -1 ? Number.MAX_SAFE_INTEGER : index };
-    })
-    .filter(({ index }) => index !== Number.MAX_SAFE_INTEGER)
-    .sort((a, b) => {
-      if (a.index !== b.index) return a.index - b.index;
-      return a.opt.name.localeCompare(b.opt.name, 'es');
-    })
-    .map(({ opt }) => opt)
-    .slice(0, limit);
+export async function loadCategoryCatalog(term?: string): Promise<Category[]> {
+  if (!(window as any).electronAPI?.getCategoryCatalog) return [];
+  return (await (window as any).electronAPI.getCategoryCatalog(term)) as Category[];
 }
 
 // Cargar productos
@@ -119,14 +37,14 @@ export function filterProductos(products: Product[], term: string): Product[] {
 // Validación
 export function validateProducto(input: Partial<Product>): { ok: boolean; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
-  const name = (input.name || '').trim();
+  const name = normalizeName(input.name || '');
   if (!name) errors.name = 'El nombre es obligatorio';
 
   const sku = (input.sku || '').trim();
   if (input.sku !== undefined && !sku) errors.sku = 'El SKU es obligatorio';
 
-  const categoryName = formatCategoryName(input.category || input.categoryId || '');
-  if (!categoryName) errors.category = 'La categoría es obligatoria';
+  const category = normalizeCategory(input.category || '');
+  if (!category) errors.category = 'La categoría es obligatoria';
 
   const stock = Number(input.stock);
   if (!Number.isInteger(stock) || stock < 0) errors.stock = 'Stock inválido';
@@ -142,17 +60,16 @@ export async function createProducto(input: ProductoCreateInput): Promise<Produc
     (err as any).fields = v.errors;
     throw err;
   }
-  const categoryName = formatCategoryName(input.category || input.categoryId || '');
-  const categoryId = normalizeCategoryId(categoryName || input.categoryId || '');
   const payload: ProductoCreateInput = {
     sku: (input.sku || '').trim(),
-    name: (input.name || '').trim(),
-    price: 0,
+    name: normalizeName(input.name || ''),
+    price: Number(input.price) || 0,
     stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
-    category: categoryName,
-    categoryId: categoryId || undefined,
-    description: input.description?.trim() || undefined,
-  } as ProductoCreateInput;
+    category: normalizeCategory(input.category || ''),
+    description: normalizeDescription(input.description),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  } as any;
   return await (window as any).electronAPI.createProduct(payload);
 }
 
@@ -162,30 +79,27 @@ export async function updateProducto(id: number, input: ProductoUpdateInput): Pr
   const base = validateProducto({
     name: input.name ?? 'x',
     sku: input.sku ?? 'x',
-    category: input.category ?? input.categoryId ?? 'x',
+    category: input.category ?? 'x',
     stock: input.stock ?? 0,
   });
   // Quitar errores de campos no provistos (dummy)
   if (input.name === undefined) delete base.errors.name;
   if (input.sku === undefined) delete base.errors.sku;
-  if (input.category === undefined && input.categoryId === undefined) delete base.errors.category;
+  if (input.category === undefined) delete base.errors.category;
   if (input.stock === undefined) delete base.errors.stock;
   if (Object.keys(base.errors).length) {
     const err = new Error('VALIDATION_ERROR');
     (err as any).fields = base.errors;
     throw err;
   }
-  const patch: ProductoUpdateInput = {};
-  if (input.sku !== undefined) patch.sku = input.sku.trim();
-  if (input.name !== undefined) patch.name = input.name.trim();
-  if (input.description !== undefined) patch.description = input.description.trim() || undefined;
-  if (input.stock !== undefined) patch.stock = Math.max(0, Math.floor(Number(input.stock)));
-  if (input.category !== undefined || input.categoryId !== undefined) {
-    const categoryName = formatCategoryName(input.category || input.categoryId || '');
-    const categoryId = normalizeCategoryId(categoryName || input.categoryId || '');
-    patch.category = categoryName;
-    patch.categoryId = categoryId || undefined;
-  }
+  const patch: ProductoUpdateInput = {
+    ...input,
+    name: input.name !== undefined ? normalizeName(input.name) : undefined,
+    category: input.category !== undefined ? normalizeCategory(input.category) : undefined,
+    description: input.description !== undefined ? normalizeDescription(input.description) : undefined,
+    stock: input.stock !== undefined ? Math.max(0, Math.floor(Number(input.stock))) : undefined,
+    price: input.price !== undefined ? Number(input.price) || 0 : undefined,
+  };
   return await (window as any).electronAPI.updateProduct(id, patch);
 }
 

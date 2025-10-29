@@ -22,13 +22,6 @@ export async function loadCustomers(): Promise<Customer[]> {
   return (await (window as any).electronAPI.getCustomers()) as Customer[];
 }
 
-export async function fetchSalesForCustomer(customerId: number): Promise<Sale[]> {
-  const id = Number(customerId);
-  if (!Number.isFinite(id) || id <= 0) return [];
-  if (!(window as any).electronAPI?.getSalesByCustomer) return [];
-  return (await (window as any).electronAPI.getSalesByCustomer(id)) as Sale[];
-}
-
 export function filterCustomers(customers: Customer[], query: string): Customer[] {
   const q = (query || '').trim().toLowerCase();
   if (!q) return customers;
@@ -200,9 +193,12 @@ export function getStatsForCustomer(
   const catCount: Record<string, number> = {};
   custSales.forEach((s) => {
     (s.items || []).forEach((it: any) => {
+      const baseName = typeof it.categoryName === 'string' && it.categoryName.trim()
+        ? it.categoryName.trim()
+        : undefined;
       const p = products.find((pp) => pp.id === it.productId);
-      const cat = p?.category || 'Otros';
-      catCount[cat] = (catCount[cat] || 0) + it.quantity;
+      const cat = baseName || p?.category || 'Otros';
+      catCount[cat] = (catCount[cat] || 0) + (it.quantity || 0);
     });
   });
   const topCategories = Object.entries(catCount)

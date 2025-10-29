@@ -20,8 +20,6 @@ import {
   loadDiscountMapFromSettings,
 } from '../../../domain/ventas/ventasService';
 import { searchCustomers } from '../../../domain/clientes/clientesService';
-import { getCategoryOptions, toCategoryOption } from '../../../domain/productos/productosService';
-import { CategoryOption } from '../../../shared/types';
 
 const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) => {
   const [q, setQ] = useState('');
@@ -71,26 +69,20 @@ export const VentasPage: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
   // clientes completos ya no se mantienen en este componente; ClienteSelector consulta al dominio
   const [recentSales, setRecentSales] = useState<any[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
 
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
 
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => getInitialPaymentMethod());
 
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
-  const [quickSale, setQuickSale] = useState<QuickSale>(() => {
-    const fallback = toCategoryOption('Otros');
-    return {
-      fecha: new Date().toISOString().split('T')[0],
-      categoryId: fallback.id,
-      categoryName: fallback.name,
-      cantidad: 1,
-      precioUnitario: 0,
-      notas: '',
-    };
+  const [quickSale, setQuickSale] = useState<QuickSale>({
+    fecha: new Date().toISOString().split('T')[0],
+    categoria: '',
+    cantidad: 1,
+    precioUnitario: 0,
+    notas: ''
   });
-
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
@@ -104,29 +96,48 @@ export const VentasPage: React.FC = () => {
       const data = await loadVentasData();
       setProducts(data.products);
       setRecentSales(data.recentSales);
-      const options = getCategoryOptions(data.products);
-      setCategories(options);
-      setQuickSale((prev) => {
-        const current = options.find((opt) => opt.id === prev.categoryId) || options.find((opt) => opt.name === prev.categoryName);
-        const fallback = current || options[0] || toCategoryOption(prev.categoryName || 'Otros');
-        return {
-          ...prev,
-          categoryId: fallback.id,
-          categoryName: fallback.name,
-        };
-      });
     } catch (e) {
       console.error('Error loading sales data:', e);
     }
   }, []);
 
+  const loadCategoryOptions = useCallback(async () => {
+    try {
+      const api = (window as any).electronAPI;
+      if (!api?.getCategoryCatalog) return;
+      const rows = await api.getCategoryCatalog();
+      if (!Array.isArray(rows)) {
+        setCategories([]);
+        return;
+      }
+      const names = rows
+        .map((cat: any) => (typeof cat?.name === 'string' ? cat.name.trim() : ''))
+        .filter((name: string) => name);
+      const unique = Array.from(new Set(names));
+      setCategories(unique);
+    } catch (err) {
+      console.warn('No se pudieron cargar categorías', err);
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
+    loadCategoryOptions();
     const off = (window as any).electronAPI?.onSalesChanged?.(() => {
       loadData().catch(() => {});
     });
     return () => { if (typeof off === 'function') off(); };
-  }, [loadData]);
+  }, [loadData, loadCategoryOptions]);
+
+  useEffect(() => {
+    if (!categories.length) return;
+    setQuickSale((prev) => {
+      if ((prev.categoria || '').trim()) {
+        return prev;
+      }
+      return { ...prev, categoria: categories[0] };
+    });
+  }, [categories]);
 
   useEffect(() => {
     // Inicial rápido por localStorage para no bloquear UI
@@ -148,19 +159,12 @@ export const VentasPage: React.FC = () => {
     e.preventDefault();
     const next = addManualQuickSaleSvc(orderItems, quickSale);
     if (next === orderItems) {
-      setFeedback({ type: 'error', message: 'Cantidad y precio deben ser mayores a 0' });
+      alert('Cantidad y precio deben ser mayores a 0');
       return;
     }
     setOrderItems(next);
-    const fallback = categories.find((c) => c.id === quickSale.categoryId) || categories[0] || toCategoryOption(quickSale.categoryName);
-    setQuickSale({
-      fecha: new Date().toISOString().split('T')[0],
-      categoryId: fallback.id,
-      categoryName: fallback.name,
-      cantidad: 1,
-      precioUnitario: 0,
-      notas: '',
-    });
+    const fallbackCategory = quickSale.categoria?.trim() || categories[0] || '';
+    setQuickSale({ fecha: new Date().toISOString().split('T')[0], categoria: fallbackCategory, cantidad: 1, precioUnitario: 0, notas: '' });
   };
 
   // Edición de líneas
@@ -184,33 +188,28 @@ export const VentasPage: React.FC = () => {
       setOrderItems([]);
       setSelectedCustomer(null);
       await loadData();
-      setFeedback({ type: 'success', message: 'Compra confirmada y guardada' });
+      alert('Compra confirmada y guardada');
     } catch (e: any) {
-      if (e?.message === 'REQUIRE_CUSTOMER') {
-        setFeedback({ type: 'error', message: 'Debes seleccionar un cliente para confirmar la venta' });
-      } else if (e?.message === 'INVALID_ITEM') {
-        setFeedback({ type: 'error', message: 'Revisa cantidades, precios y categoría de cada línea' });
-      } else if (e?.message === 'INSUFFICIENT_STOCK' || e?.code === 'INSUFFICIENT_STOCK') {
-        const categoryName = e?.categoryName || 'categoría seleccionada';
-        setFeedback({ type: 'error', message: `Stock insuficiente en la ${categoryName}` });
-      } else if (e?.message === 'CUSTOMER_NOT_FOUND' || e?.code === 'CUSTOMER_NOT_FOUND') {
-        setFeedback({ type: 'error', message: 'Cliente no encontrado. Verifica la selección e inténtalo nuevamente.' });
-      } else if (e?.message === 'SALE_CONFIRMATION_FAILED' || e?.code === 'SALE_CONFIRMATION_FAILED') {
-        setFeedback({ type: 'error', message: 'Error al confirmar la compra. Intenta de nuevo o contacta a soporte.' });
+      const code = e?.code || e?.message;
+      if (code === 'REQUIRE_CUSTOMER') {
+        alert('Debes seleccionar un cliente para confirmar la venta');
+      } else if (code === 'CUSTOMER_NOT_FOUND') {
+        alert('Cliente no encontrado. Selecciona nuevamente.');
+      } else if (code === 'INSUFFICIENT_STOCK') {
+        const cat = e?.categoryName ? ` para ${e.categoryName}` : '';
+        alert(`Stock insuficiente${cat}. Verifica las cantidades.`);
+      } else if (code === 'INVALID_ITEM') {
+        alert('Hay líneas de venta con datos inválidos. Revisa cantidades y precios.');
+      } else if (code === 'SALE_CONFIRMATION_FAILED') {
+        alert('Error al confirmar la compra. Inténtalo nuevamente.');
       } else {
         console.error('Error al confirmar compra:', e);
-        setFeedback({ type: 'error', message: 'Error al confirmar la compra' });
+        alert('Error al confirmar la compra');
       }
     } finally {
       setIsConfirming(false);
     }
   }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData]);
-
-  useEffect(() => {
-    if (!feedback) return;
-    const timeout = setTimeout(() => setFeedback(null), 4000);
-    return () => clearTimeout(timeout);
-  }, [feedback]);
 
   const filteredProducts = computeFilteredProducts(products, searchTerm);
 
@@ -243,21 +242,19 @@ export const VentasPage: React.FC = () => {
             </div>
             <div>
               <label style={{ display:'block', fontSize:12, color:'#666' }}>Categoría</label>
-              <select
-                value={quickSale.categoryId}
-                onChange={(e) => {
-                  const option = categories.find((c) => c.id === e.target.value) || toCategoryOption(e.target.value);
-                  setQuickSale({ ...quickSale, categoryId: option.id, categoryName: option.name });
-                }}
+              <input
+                type="text"
+                list="ventas-category-catalog"
+                value={quickSale.categoria}
+                onChange={e=>setQuickSale({ ...quickSale, categoria: e.target.value })}
+                placeholder="Selecciona o crea"
                 style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}
-              >
+              />
+              <datalist id="ventas-category-catalog">
                 {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  <option key={cat} value={cat} />
                 ))}
-                {categories.length === 0 && (
-                  <option value={quickSale.categoryId}>{quickSale.categoryName}</option>
-                )}
-              </select>
+              </datalist>
             </div>
             <div>
               <label style={{ display:'block', fontSize:12, color:'#666' }}>Cantidad</label>
@@ -267,8 +264,8 @@ export const VentasPage: React.FC = () => {
             </div>
             <div>
               <label style={{ display:'block', fontSize:12, color:'#666' }}>Precio Unitario</label>
-              <input type="number" min={0.01} step="0.01" value={quickSale.precioUnitario}
-                onChange={e=>setQuickSale({...quickSale, precioUnitario: Math.max(0.01, parseFloat((e.target as HTMLInputElement).value)||0.01)})}
+              <input type="number" min={0} step="0.01" value={quickSale.precioUnitario}
+                onChange={e=>setQuickSale({...quickSale, precioUnitario: Math.max(0, parseFloat((e.target as HTMLInputElement).value)||0)})}
                 style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }} />
             </div>
             <div style={{ gridColumn:'1/-1' }}>
@@ -280,21 +277,16 @@ export const VentasPage: React.FC = () => {
               <button type="submit" style={{ background:'#2196f3', color:'#fff', border:'none', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Agregar al pedido</button>
               <button
                 type="button"
-                onClick={() => {
-                  const fallback = categories[0] || toCategoryOption('Otros');
+                onClick={() =>
                   setQuickSale({
                     fecha: new Date().toISOString().split('T')[0],
-                    categoryId: fallback.id,
-                    categoryName: fallback.name,
+                    categoria: categories[0] || '',
                     cantidad: 1,
                     precioUnitario: 0,
                     notas: '',
-                  });
-                }}
-                style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}
-              >
-                Limpiar
-              </button>
+                  })
+                }
+                style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Limpiar</button>
             </div>
           </form>
         </div>
@@ -351,7 +343,7 @@ export const VentasPage: React.FC = () => {
                     <button onClick={()=>updateQty(it.id, it.quantity+1)} style={{ width:24, height:24, border:'1px solid #ddd', background:'#fff', cursor:'pointer' }}>+</button>
                     <input
                       type="number"
-                      min={0.01}
+                      min={0}
                       step="0.01"
                       value={it.unitPrice}
                       onChange={e=>updatePriceManual(it.id, parseFloat((e.target as HTMLInputElement).value)||0)}
@@ -396,11 +388,11 @@ export const VentasPage: React.FC = () => {
           <button onClick={()=>setOrderItems([])} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Cancelar</button>
         </div>
 
-      {/* Ventas recientes */}
-      <div style={{ marginTop:16, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
-        <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
-        <div style={{ maxHeight: 180, overflow: 'auto' }}>
-          {recentSales.length === 0 ? (
+        {/* Ventas recientes */}
+        <div style={{ marginTop:16, padding: 14, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Ventas recientes</div>
+          <div style={{ maxHeight: 180, overflow: 'auto' }}>
+            {recentSales.length === 0 ? (
               <div style={{ color: '#666', fontSize: 13 }}>Sin ventas aún</div>
             ) : (
               recentSales.map((s:any)=> (
@@ -410,30 +402,9 @@ export const VentasPage: React.FC = () => {
                 </div>
               ))
             )}
+          </div>
         </div>
       </div>
-      </div>
-      {feedback && (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            bottom: 24,
-            right: 24,
-            background: feedback.type === 'success' ? '#2f855a' : feedback.type === 'error' ? '#c53030' : '#2b6cb0',
-            color: '#fff',
-            padding: '12px 16px',
-            borderRadius: 10,
-            boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
-            zIndex: 2000,
-            minWidth: 220,
-            fontWeight: 600,
-            letterSpacing: 0.3,
-          }}
-        >
-          {feedback.message}
-        </div>
-      )}
     </div>
   );
 };

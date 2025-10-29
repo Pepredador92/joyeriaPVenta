@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
-import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD, CategoryOption } from './shared/types';
+import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD, Category } from './shared/types';
 import { VentasPage } from './presentation/modules/ventas';
 import { ClientesPage } from './presentation/modules/clientes/ClientesPage';
 import { InventarioPage } from './presentation/modules/inventario/InventarioPage';
@@ -12,7 +12,6 @@ import {
   getStatsForCustomer as getStatsForCustomerSvc,
   decideCustomerLevelFromTotal,
   phoneDigits as phoneDigitsUtil,
-  fetchSalesForCustomer as fetchSalesForCustomerSvc,
 } from './domain/clientes/clientesService';
 import {
   getVentasTotales as getVentasTotalesRpt,
@@ -29,9 +28,7 @@ import {
   updateProducto as updateProductoSvc,
   deleteProducto as deleteProductoSvc,
   getUniqueSKU,
-  getCategoryOptions,
-  filterCategorySuggestions,
-  loadCategoryCatalog,
+  loadCategoryCatalog as loadCategoryCatalogSvc,
 } from './domain/productos/productosService';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
@@ -638,47 +635,48 @@ const Products = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [newProduct, setNewProduct] = useState({
-    sku: '', name: '', stock: 0, category: '', description: ''
+    sku: '', name: '', price: 0, stock: 0, category: '', description: ''
   });
+  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
+  const [isCategoryLoading, setIsCategoryLoading] = useState(false);
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
-  const [categoryCatalog, setCategoryCatalog] = useState<CategoryOption[]>([]);
 
-  const categoryOptionsFromProducts = useMemo(() => getCategoryOptions(products), [products]);
-  const mergedCategoryOptions = useMemo(() => {
-    const map = new Map<string, CategoryOption>();
-    [...categoryCatalog, ...categoryOptionsFromProducts].forEach((opt) => {
-      if (opt.id) map.set(opt.id, opt);
-    });
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-  }, [categoryCatalog, categoryOptionsFromProducts]);
-  const categorySuggestions = useMemo(
-    () => filterCategorySuggestions(mergedCategoryOptions, newProduct.category, 6),
-    [mergedCategoryOptions, newProduct.category]
-  );
-
-
-  const refreshCategoryCatalog = useCallback(async (term = '') => {
-    const catalog = await loadCategoryCatalog(term);
-    setCategoryCatalog(catalog);
-  }, []);
 
   useEffect(() => {
     loadProducts();
-    refreshCategoryCatalog();
-  }, [refreshCategoryCatalog]);
+  }, []);
 
   const loadProducts = async () => {
     try {
       const data = await loadProductosSvc();
       setProducts(data);
-      if (!categoryCatalog.length) {
-        const catalog = await loadCategoryCatalog();
-        setCategoryCatalog(catalog);
-      }
     } catch (error) {
       console.error('Error loading products:', error);
     }
   };
+
+  useEffect(() => {
+    if (!showAddForm) return;
+    let active = true;
+    const term = (newProduct.category || '').trim();
+    setIsCategoryLoading(true);
+    loadCategoryCatalogSvc(term || undefined)
+      .then((rows) => {
+        if (!active) return;
+        setCategorySuggestions(rows);
+      })
+      .catch((err) => {
+        console.warn('Failed to load category suggestions', err);
+        if (!active) return;
+        setCategorySuggestions([]);
+      })
+      .finally(() => {
+        if (active) setIsCategoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [newProduct.category, showAddForm]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -690,17 +688,13 @@ const Products = () => {
         alert(first);
         return;
       }
-      const payload = {
-        ...newProduct,
-        stock: Number(newProduct.stock) || 0,
-      };
       if (editingProduct) {
-        await updateProductoSvc(editingProduct.id, payload as any);
+        await updateProductoSvc(editingProduct.id, newProduct);
       } else {
-        await createProductoSvc(payload as any);
+        await createProductoSvc(newProduct as any);
       }
       resetForm();
-      await Promise.all([loadProducts(), refreshCategoryCatalog()]);
+      loadProducts();
     } catch (error) {
       const err: any = error as any;
       console.error('Error saving product:', err);
@@ -717,7 +711,7 @@ const Products = () => {
     if (confirm('¿Estás seguro de que quieres eliminar este producto?')) {
       try {
         await deleteProductoSvc(id);
-        await Promise.all([loadProducts(), refreshCategoryCatalog()]);
+        loadProducts();
       } catch (error) {
         console.error('Error deleting product:', error);
         alert('Error al eliminar el producto');
@@ -730,26 +724,30 @@ const Products = () => {
     setNewProduct({
       sku: product.sku,
       name: product.name,
+      price: product.price,
       stock: product.stock,
       category: product.category,
       description: product.description || ''
     });
+    setShowCategorySuggestions(true);
+    setCategorySuggestions([]);
     setShowAddForm(true);
-    refreshCategoryCatalog(product.category || '');
   };
 
   // Cuando se abre el formulario de nuevo producto, autogenerar SKU
   const handleShowAddForm = () => {
     setEditingProduct(null);
     const uniqueSku = getUniqueSKU(products);
-    setNewProduct({ sku: uniqueSku, name: '', stock: 0, category: '', description: '' });
-    setShowCategorySuggestions(false);
+    setNewProduct({ sku: uniqueSku, name: '', price: 0, stock: 0, category: '', description: '' });
+    setCategorySuggestions([]);
+    setShowCategorySuggestions(true);
     setShowAddForm(true);
   };
 
   const resetForm = () => {
-    setNewProduct({ sku: '', name: '', stock: 0, category: '', description: '' });
+    setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: '', description: '' });
     setEditingProduct(null);
+    setCategorySuggestions([]);
     setShowCategorySuggestions(false);
     setShowAddForm(false);
   };
@@ -809,7 +807,7 @@ const Products = () => {
                     type="text"
                     value={newProduct.sku}
                     readOnly={!editingProduct}
-                    onChange={editingProduct ? (e) => setNewProduct({...newProduct, sku: e.target.value}) : undefined}
+                    onChange={editingProduct ? (e) => setNewProduct({ ...newProduct, sku: e.target.value }) : undefined}
                     required
                     style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', background: editingProduct ? 'white' : '#f5f5f5', color: editingProduct ? 'black' : '#888' }}
                   />
@@ -823,35 +821,25 @@ const Products = () => {
                     onFocus={() => setShowCategorySuggestions(true)}
                     onBlur={() => setTimeout(() => setShowCategorySuggestions(false), 120)}
                     required
-                    placeholder="Escribe o selecciona una categoría"
+                    placeholder="Ej. Anillos, Collares..."
                     style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                   />
-                  {showCategorySuggestions && categorySuggestions.length > 0 && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: '100%',
-                        left: 0,
-                        right: 0,
-                        background: 'white',
-                        border: '1px solid #ddd',
-                        borderRadius: '4px',
-                        marginTop: '4px',
-                        maxHeight: '160px',
-                        overflowY: 'auto',
-                        zIndex: 20,
-                        boxShadow: '0 6px 16px rgba(0,0,0,0.12)'
-                      }}
-                    >
+                  {showCategorySuggestions && (categorySuggestions.length > 0 || isCategoryLoading) && (
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #ddd', borderRadius: '4px', marginTop: '4px', maxHeight: '180px', overflowY: 'auto', zIndex: 10 }}>
+                      {isCategoryLoading && (
+                        <div style={{ padding: '8px', fontSize: '12px', color: '#666' }}>Cargando categorías…</div>
+                      )}
+                      {!isCategoryLoading && categorySuggestions.length === 0 && (
+                        <div style={{ padding: '8px', fontSize: '12px', color: '#666' }}>Escribe para crear una nueva categoría</div>
+                      )}
                       {categorySuggestions.map((cat) => (
                         <div
                           key={cat.id}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setNewProduct((prev) => ({ ...prev, category: cat.name }));
+                          onMouseDown={() => {
+                            setNewProduct({ ...newProduct, category: cat.name });
                             setShowCategorySuggestions(false);
                           }}
-                          style={{ padding: '8px 10px', cursor: 'pointer' }}
+                          style={{ padding: '8px', cursor: 'pointer', borderBottom: '1px solid #f0f0f0', fontSize: '14px' }}
                         >
                           {cat.name}
                         </div>
@@ -874,14 +862,8 @@ const Products = () => {
                 <label style={{ display: 'block', marginBottom: '5px' }}>Stock:</label>
                 <input
                   type="number"
-                  min={0}
                   value={newProduct.stock}
-                  onChange={(e) =>
-                    setNewProduct({
-                      ...newProduct,
-                      stock: Math.max(0, Number.isFinite(parseInt(e.target.value, 10)) ? parseInt(e.target.value, 10) : 0),
-                    })
-                  }
+                  onChange={(e) => setNewProduct({ ...newProduct, stock: parseInt(e.target.value, 10) || 0 })}
                   required
                   style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                 />
@@ -930,7 +912,6 @@ const Products = () => {
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>SKU</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Producto</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Categoría</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Descripción</th>
               <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Stock</th>
               <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Acciones</th>
             </tr>
@@ -939,7 +920,14 @@ const Products = () => {
             {filteredProducts.map((product) => (
               <tr key={product.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                 <td style={{ padding: '12px', fontFamily: 'monospace' }}>{product.sku}</td>
-                <td style={{ padding: '12px', fontWeight: 'bold' }}>{product.name}</td>
+                <td style={{ padding: '12px' }}>
+                  <div>
+                    <div style={{ fontWeight: 'bold' }}>{product.name}</div>
+                    {product.description && (
+                      <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{product.description}</div>
+                    )}
+                  </div>
+                </td>
                 <td style={{ padding: '12px' }}>
                   <span style={{
                     padding: '4px 8px',
@@ -951,7 +939,6 @@ const Products = () => {
                     {product.category}
                   </span>
                 </td>
-                <td style={{ padding: '12px', color: '#555', fontSize: '13px' }}>{product.description || '—'}</td>
                 <td style={{ padding: '12px', textAlign: 'right' }}>
                   <span style={{
                     color: product.stock < 10 ? '#d32f2f' : product.stock < 20 ? '#f57c00' : '#388e3c',
@@ -1466,7 +1453,7 @@ const CashSession = () => {
                     Ver detalle
                   </button>
                   {session.status === 'Abierta' && (
-                    <button 
+                    <button
                       onClick={() => handleEdit(session)}
                       style={{ 
                         padding: '4px 8px', 
@@ -1588,9 +1575,6 @@ const Reports = () => {
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=> setToast(null), 2500); };
   // Estado para detalles de cliente
   const [detailsCustomer, setDetailsCustomer] = useState<any|null>(null);
-  const [customerHistory, setCustomerHistory] = useState<any[]>([]);
-  const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
-  const [customerHistoryError, setCustomerHistoryError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -1678,35 +1662,6 @@ const Reports = () => {
       console.error('Error loading data:', error);
     }
   };
-
-  const loadCustomerHistory = useCallback(async (customerId: number) => {
-    const id = Number(customerId);
-    setCustomerHistoryLoading(true);
-    setCustomerHistory([]);
-    setCustomerHistoryError(null);
-    if (!Number.isFinite(id) || id <= 0) {
-      setCustomerHistoryLoading(false);
-      return;
-    }
-    try {
-      const history = await fetchSalesForCustomerSvc(id);
-      setCustomerHistory(history || []);
-    } catch (error) {
-      console.error('Error loading sales history for customer:', error);
-      setCustomerHistoryError('No se pudo cargar el historial de compras');
-      setCustomerHistory([]);
-    } finally {
-      setCustomerHistoryLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!detailsCustomer) {
-      setCustomerHistory([]);
-      setCustomerHistoryError(null);
-      setCustomerHistoryLoading(false);
-    }
-  }, [detailsCustomer]);
 
   const filteredSales = sales.filter(sale => {
     const saleDate = new Date(sale.createdAt).toISOString().split('T')[0];
@@ -1900,17 +1855,6 @@ const Reports = () => {
     }
   };
 
-  const openCustomerDetails = useCallback((customer: any) => {
-    setDetailsCustomer(customer);
-    if (customer?.id) {
-      loadCustomerHistory(customer.id);
-    } else {
-      setCustomerHistory([]);
-      setCustomerHistoryError(null);
-      setCustomerHistoryLoading(false);
-    }
-  }, [loadCustomerHistory]);
-
   const renderGeneralTab = () => (
     <div>
       {/* Resumen general */}
@@ -2070,7 +2014,7 @@ const Reports = () => {
                   </td>
                   <td style={{ padding: '15px', textAlign: 'center' }}>
                     <button
-                      onClick={() => openCustomerDetails(stat.customer)}
+                      onClick={() => setDetailsCustomer(stat.customer)}
                       style={{ 
                         marginRight: '8px', 
                         padding: '6px 12px', 
@@ -2144,13 +2088,7 @@ const Reports = () => {
       {detailsCustomer && (
         <CustomerDetailsModal
           customer={detailsCustomer}
-          stats={getStatsForCustomer(detailsCustomer.id)}
-          history={customerHistory}
-          loadingHistory={customerHistoryLoading}
-          historyError={customerHistoryError}
-          onReload={() => {
-            if (detailsCustomer?.id) loadCustomerHistory(detailsCustomer.id);
-          }}
+          stats={getStatsForCustomer(detailsCustomer.id, sales as any, customers as any, products as any)}
           onClose={() => setDetailsCustomer(null)}
         />
       )}
@@ -2198,89 +2136,75 @@ const Reports = () => {
 };
 
 // Modal de detalles de cliente
-type CustomerDetailsModalProps = {
-  customer: any;
-  onClose: () => void;
-  stats: any;
-  history: any[];
-  loadingHistory: boolean;
-  historyError: string | null;
-  onReload: () => void;
-};
-const CustomerDetailsModal = ({ customer, onClose, stats, history, loadingHistory, historyError, onReload }: CustomerDetailsModalProps) => {
+type CustomerDetailsModalProps = { customer: any; onClose: () => void; stats: any };
+const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModalProps) => {
   const phoneDigits = phoneDigitsUtil(customer.phone);
   const waLink = phoneDigits ? `https://wa.me/${phoneDigits}` : '';
   const telLink = customer.phone ? `tel:${customer.phone}` : '';
-  const historySummary = useMemo(() => {
-    if (Array.isArray(history) && history.length > 0) {
-      const sorted = [...history].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      let totalFromLines = 0;
-      const categoryTotals: Record<string, number> = {};
-      const enriched = sorted.map((sale: any) => {
-        const lineTotal = (sale.items || []).reduce((sum: number, item: any) => {
-          const quantity = Math.max(0, Number(item?.quantity ?? 0));
-          const unitPrice = Number(item?.unitPrice ?? 0);
-          const subtotal = quantity * unitPrice;
-          const catName = (item?.categoryName || item?.categoryId || 'Sin categoría').toString().trim() || 'Sin categoría';
-          categoryTotals[catName] = (categoryTotals[catName] || 0) + quantity;
-          return sum + subtotal;
-        }, 0);
-        totalFromLines += lineTotal;
-        return { ...sale, lineTotal };
-      });
-      const purchases = enriched.length;
-      const avgFromLines = purchases ? totalFromLines / purchases : 0;
-      const topCategories = Object.entries(categoryTotals)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-      return {
-        purchases,
-        totalFromLines,
-        avgFromLines,
-        lastPurchase: enriched[0]?.createdAt ?? null,
-        topCategories,
-        historyRows: enriched,
-      };
-    }
+  const [history, setHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
-    const fallbackRecent = Array.isArray(stats?.recent)
-      ? stats.recent.map((sale: any) => {
-          const lineTotal = (sale.items || []).reduce((sum: number, item: any) => {
-            const quantity = Math.max(0, Number(item?.quantity ?? 0));
-            const unitPrice = Number(item?.unitPrice ?? 0);
-            return sum + quantity * unitPrice;
-          }, 0);
-          return { ...sale, lineTotal };
-        })
-      : [];
-    const fallbackTotal = fallbackRecent.reduce((sum: number, sale: any) => sum + (sale.lineTotal ?? 0), 0);
-    const fallbackPurchases = fallbackRecent.length || stats?.purchases || 0;
-    const fallbackAvg = fallbackPurchases ? fallbackTotal / fallbackPurchases : 0;
-    const fallbackLast = stats?.lastPurchase ?? (fallbackRecent[0]?.createdAt ?? null);
-    const fallbackTop = Array.isArray(stats?.topCategories) ? stats.topCategories : [];
-
-    return {
-      purchases: stats?.purchases ?? fallbackPurchases,
-      totalFromLines: fallbackTotal || stats?.total || 0,
-      avgFromLines: stats?.avg ?? fallbackAvg,
-      lastPurchase: fallbackLast,
-      topCategories: fallbackTop,
-      historyRows: fallbackRecent,
+  useEffect(() => {
+    let active = true;
+    const loadHistory = async () => {
+      try {
+        setLoadingHistory(true);
+        setHistoryError(null);
+        const api = (window as any).electronAPI;
+        if (!api?.getSalesByCustomer) {
+          setHistory([]);
+          return;
+        }
+        const rows = await api.getSalesByCustomer(customer.id);
+        if (!active) return;
+        const sorted = Array.isArray(rows)
+          ? [...rows].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          : [];
+        setHistory(sorted);
+      } catch (error) {
+        if (!active) return;
+        console.error('Error loading customer sales history', error);
+        setHistoryError('No se pudo cargar el historial de compras');
+        setHistory([]);
+      } finally {
+        if (active) setLoadingHistory(false);
+      }
     };
-  }, [history, stats]);
+    loadHistory();
+    return () => { active = false; };
+  }, [customer]);
+
+  const purchases = history.length || stats?.purchases || 0;
+  const totalSpent = history.reduce((sum, sale) => sum + (sale.total || 0), 0) || stats?.total || 0;
+  const avgTicket = purchases ? totalSpent / purchases : stats?.avg || 0;
+  const lastPurchase = history[0]?.createdAt || stats?.lastPurchase || null;
+
+  const topCategoryMap = history.reduce((acc: Record<string, number>, sale) => {
+    (sale.items || []).forEach((item: any) => {
+      const name = item.categoryName || 'Sin categoría';
+      acc[name] = (acc[name] || 0) + (item.quantity || 0);
+    });
+    return acc;
+  }, {} as Record<string, number>);
+  const computedTopCategories = Object.entries(topCategoryMap)
+    .sort((a, b) => (b[1] as number) - (a[1] as number))
+    .slice(0, 5);
+  const topCategories = computedTopCategories.length ? computedTopCategories : stats?.topCategories || [];
+  const recentSales = history.slice(0, 10);
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
-      <div style={{ background:'#fff', borderRadius:12, padding:24, width:'min(900px, 92vw)', maxHeight:'90vh', overflow:'auto' }}>
+      <div style={{ background:'#fff', borderRadius:12, padding:24, width:'min(900px, 92vw)', maxHeight:'90vh', overflow:'auto'}}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
           <h2 style={{ margin:0 }}>🧑‍💼 {customer.name}</h2>
           <button onClick={onClose} style={{ border:'1px solid #ddd', background:'#fff', borderRadius:8, padding:'6px 10px', cursor:'pointer' }}>Cerrar</button>
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:12, marginBottom:16 }}>
-          <div className="stat-card"><div className="stat-value">{historySummary.purchases}</div><small>Compras</small></div>
-          <div className="stat-card"><div className="stat-value">{'$' + historySummary.totalFromLines.toLocaleString()}</div><small>Total gastado</small></div>
-          <div className="stat-card"><div className="stat-value">{'$' + historySummary.avgFromLines.toLocaleString()}</div><small>Ticket promedio</small></div>
-          <div className="stat-card"><div className="stat-value">{historySummary.lastPurchase ? new Date(historySummary.lastPurchase).toLocaleDateString('es-MX') : '-'}</div><small>Última compra</small></div>
+          <div className="stat-card"><div className="stat-value">{purchases}</div><small>Compras</small></div>
+          <div className="stat-card"><div className="stat-value">{'$' + totalSpent.toLocaleString()}</div><small>Total gastado</small></div>
+          <div className="stat-card"><div className="stat-value">{'$' + avgTicket.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div><small>Ticket promedio</small></div>
+          <div className="stat-card"><div className="stat-value">{lastPurchase ? new Date(lastPurchase).toLocaleDateString('es-MX') : '-'}</div><small>Última compra</small></div>
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
           <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:10, padding:12 }}>
@@ -2299,9 +2223,9 @@ const CustomerDetailsModal = ({ customer, onClose, stats, history, loadingHistor
           </div>
           <div style={{ background:'#fafafa', border:'1px solid #eee', borderRadius:10, padding:12 }}>
             <h3 style={{ marginTop:0 }}>🏷️ Top categorías</h3>
-            {historySummary.topCategories.length===0 ? <div style={{ color:'#666' }}>Sin datos</div> : (
+            {topCategories.length === 0 ? <div style={{ color:'#666' }}>Sin datos</div> : (
               <ul style={{ margin:0, paddingLeft:18 }}>
-                {historySummary.topCategories.map(([cat, cnt]:any)=> (
+                {topCategories.map(([cat, cnt]: any) => (
                   <li key={cat}>{cat} · {cnt}</li>
                 ))}
               </ul>
@@ -2309,64 +2233,30 @@ const CustomerDetailsModal = ({ customer, onClose, stats, history, loadingHistor
           </div>
         </div>
         <div style={{ marginTop:16, background:'#fff', border:'1px solid #eee', borderRadius:10, padding:12 }}>
-          <h3 style={{ marginTop:0 }}>🧾 Historial de compras</h3>
+          <h3 style={{ marginTop:0 }}>🧾 Ventas recientes</h3>
           {loadingHistory ? (
             <div style={{ color:'#666' }}>Cargando historial…</div>
           ) : historyError ? (
-            <div style={{ color:'#d32f2f', display:'flex', alignItems:'center', gap:12 }}>
-              <span>{historyError}</span>
-              <button onClick={onReload} style={{ border:'1px solid #d32f2f', background:'#fff', color:'#d32f2f', borderRadius:6, padding:'4px 8px', cursor:'pointer' }}>Reintentar</button>
-            </div>
-          ) : historySummary.historyRows.length === 0 ? (
+            <div style={{ color:'#d32f2f' }}>{historyError}</div>
+          ) : recentSales.length === 0 ? (
             <div style={{ color:'#666' }}>Sin ventas</div>
           ) : (
-            <div style={{ maxHeight:320, overflow:'auto', display:'flex', flexDirection:'column', gap:12 }}>
-              {historySummary.historyRows.map((sale:any) => {
-                const total = Number.isFinite(Number(sale.total)) ? Number(sale.total) : Number(sale.lineTotal ?? 0);
-                const discount = Number(sale.discount ?? 0);
-                const tax = Number(sale.tax ?? 0);
-                return (
-                  <div key={sale.id} style={{ border:'1px solid #f0f0f0', borderRadius:8, padding:12 }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                      <div>
-                        <div style={{ fontWeight:600 }}>{new Date(sale.createdAt).toLocaleString('es-MX')}</div>
-                        <div style={{ fontSize:12, color:'#666' }}>Venta #{sale.id}</div>
-                      </div>
-                      <div style={{ textAlign:'right', fontSize:13 }}>
-                        <div style={{ fontWeight:600, fontSize:15 }}>{`$${total.toFixed(2)}`}</div>
-                        <div style={{ color:'#666' }}>Subtotal líneas: ${Number(sale.lineTotal ?? 0).toFixed(2)}</div>
-                        {discount > 0 && <div style={{ color:'#d32f2f' }}>Descuento: -${discount.toFixed(2)}</div>}
-                        {tax > 0 && <div style={{ color:'#4caf50' }}>Impuesto: ${tax.toFixed(2)}</div>}
-                      </div>
-                    </div>
-                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
-                      <thead>
-                        <tr style={{ textAlign:'left', borderBottom:'1px solid #eee' }}>
-                          <th style={{ padding:'4px 0' }}>Categoría</th>
-                          <th style={{ padding:'4px 0' }}>Cantidad</th>
-                          <th style={{ padding:'4px 0' }}>Precio unitario</th>
-                          <th style={{ padding:'4px 0', textAlign:'right' }}>Subtotal</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(sale.items || []).map((item: any, idx: number) => {
-                          const qty = Math.max(0, Number(item?.quantity ?? 0));
-                          const unit = Number(item?.unitPrice ?? 0);
-                          const sub = qty * unit;
-                          return (
-                            <tr key={`${sale.id}-item-${idx}`} style={{ borderBottom:'1px dotted #f0f0f0' }}>
-                              <td style={{ padding:'4px 0' }}>{item?.categoryName || item?.categoryId || 'Sin categoría'}</td>
-                              <td style={{ padding:'4px 0' }}>{qty}</td>
-                              <td style={{ padding:'4px 0' }}>${unit.toFixed(2)}</td>
-                              <td style={{ padding:'4px 0', textAlign:'right' }}>${sub.toFixed(2)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+            <div style={{ maxHeight:260, overflow:'auto', display:'flex', flexDirection:'column', gap:8 }}>
+              {recentSales.map((sale: any) => (
+                <div key={sale.id} style={{ border: '1px solid #eee', borderRadius: 8, padding: 10 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, marginBottom:6 }}>
+                    <span>{new Date(sale.createdAt).toLocaleString('es-MX')}</span>
+                    <span style={{ fontWeight:600 }}>{'$' + (sale.total || 0).toFixed(2)}</span>
                   </div>
-                );
-              })}
+                  <ul style={{ margin:0, paddingLeft:18, fontSize:12, color:'#555' }}>
+                    {(sale.items || []).map((item: any, idx: number) => (
+                      <li key={`${sale.id}-${idx}`}>
+                        {item.categoryName || 'Sin categoría'} · {item.quantity} × ${Number(item.unitPrice || 0).toFixed(2)} = ${Number(item.subtotal || item.unitPrice * item.quantity || 0).toFixed(2)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </div>
           )}
         </div>

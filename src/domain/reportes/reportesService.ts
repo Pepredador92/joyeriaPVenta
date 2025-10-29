@@ -2,12 +2,8 @@
 
 export type SaleItem = {
   productId?: number;
-  categoryId?: string;
-  categoryName?: string;
   quantity?: number;
-  unitPrice?: number;
   subtotal?: number; // sin impuestos
-  type?: 'product' | 'manual';
 };
 
 export type Sale = {

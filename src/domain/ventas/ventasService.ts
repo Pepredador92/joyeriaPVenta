@@ -4,6 +4,17 @@ import { getDiscountLevels as getDiscountLevelsCfg } from '../configuracion/conf
 
 export type PaymentMethod = 'Efectivo' | 'Tarjeta' | 'Transferencia';
 
+const normalizeCategoryId = (value: string) => (value || '').toString().trim().toLowerCase();
+const formatCategoryName = (value: string) => {
+  const trimmed = (value || '').toString().trim();
+  if (!trimmed) return 'Sin categoría';
+  return trimmed
+    .split(' ')
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : ''))
+    .join(' ')
+    .trim();
+};
+
 export type OrderItem = {
   id: number;
   type: 'product' | 'manual';
@@ -18,8 +29,7 @@ export type OrderItem = {
 
 export type QuickSale = {
   fecha: string;
-  categoryId: string;
-  categoryName: string;
+  categoria: string;
   cantidad: number;
   precioUnitario: number;
   notas?: string;
@@ -112,16 +122,14 @@ export async function readTaxRateFromSettings(current: number): Promise<number> 
   return current;
 }
 
-const normalizeCategoryId = (name: string) => (name || '').trim().toLowerCase();
-const resolveCategoryName = (product: any) => (product?.category || 'Sin categoría').trim() || 'Sin categoría';
-
 export function addProductToOrder(items: OrderItem[], product: any): OrderItem[] {
   if (product.stock <= 0) return items;
   const found = items.find((i) => i.type === 'product' && i.productId === product.id);
   if (found) {
     return items.map((i) => (i === found ? { ...i, quantity: i.quantity + 1 } : i));
   }
-  const categoryName = resolveCategoryName(product);
+  const categoryName = formatCategoryName(product.category || product.categoryName || '');
+  const categoryId = normalizeCategoryId(product.categoryId || product.category || categoryName);
   return [
     ...items,
     {
@@ -129,7 +137,7 @@ export function addProductToOrder(items: OrderItem[], product: any): OrderItem[]
       type: 'product',
       productId: product.id,
       name: product.name,
-      categoryId: normalizeCategoryId(product.category || categoryName),
+      categoryId,
       categoryName,
       unitPrice: product.price,
       quantity: 1,
@@ -139,14 +147,16 @@ export function addProductToOrder(items: OrderItem[], product: any): OrderItem[]
 
 export function addManualQuickSale(items: OrderItem[], quick: QuickSale): OrderItem[] {
   if (quick.cantidad < 1 || quick.precioUnitario <= 0) return items;
+  const categoryName = formatCategoryName(quick.categoria);
+  const categoryId = normalizeCategoryId(quick.categoria);
   return [
     ...items,
     {
       id: Date.now(),
       type: 'manual',
-      name: `Venta rápida · ${quick.categoryName}`,
-      categoryId: quick.categoryId,
-      categoryName: quick.categoryName,
+      name: `Venta rápida · ${quick.categoria}`,
+      categoryId,
+      categoryName,
       unitPrice: Number(quick.precioUnitario) || 0,
       quantity: Math.floor(quick.cantidad) || 1,
       notes: quick.notas?.trim() || '',
@@ -158,11 +168,7 @@ export const removeItem = (items: OrderItem[], id: number) => items.filter((i) =
 export const updateQty = (items: OrderItem[], id: number, qty: number) =>
   items.map((i) => (i.id === id ? { ...i, quantity: Math.max(1, Math.floor(qty) || 1) } : i));
 export const updatePrice = (items: OrderItem[], id: number, price: number) =>
-  items.map((i) =>
-    i.id === id
-      ? { ...i, unitPrice: Math.min(999999, Math.max(0.01, Number.isFinite(price) ? Number(price) : 0.01)) }
-      : i
-  );
+  items.map((i) => (i.id === id ? { ...i, unitPrice: Math.min(999999, Math.max(0, Number(price) || 0)) } : i));
 
 export function computeFilteredCustomers(customers: any[], customerQuery: string): any[] {
   const raw = customerQuery.trim();
@@ -214,27 +220,11 @@ export async function confirmOrder(
     }
   } catch {}
 
-  const invalidItem = items.find(
-    (i) =>
-      !i ||
-      i.quantity < 1 ||
-      !Number.isFinite(i.quantity) ||
-      i.unitPrice <= 0 ||
-      !Number.isFinite(i.unitPrice) ||
-      !i.categoryId ||
-      !i.categoryName
-  );
-  if (invalidItem) {
-    const error = new Error('INVALID_ITEM');
-    (error as any).details = invalidItem;
-    throw error;
-  }
-
   const saleItems = items.map((i) => ({
     productId: i.type === 'product' && i.productId ? i.productId : undefined,
     categoryId: i.categoryId,
     categoryName: i.categoryName,
-    quantity: Math.floor(i.quantity),
+    quantity: Math.max(1, Math.floor(i.quantity)),
     unitPrice: +(i.unitPrice || 0),
     subtotal: +(i.unitPrice * i.quantity).toFixed(2),
     notes: i.notes || undefined,
@@ -243,6 +233,8 @@ export async function confirmOrder(
   const manualNotes = items
     .filter((i) => i.type === 'manual')
     .map((i) => `Categoría: ${i.categoryName}${i.notes ? ' | ' + i.notes : ''}`);
+
+  const appliedDiscountPercent = totals.subtotal > 0 ? +(totals.discount / totals.subtotal * 100).toFixed(2) : 0;
 
   const saleData = {
     customerId: selectedCustomer?.id || undefined,
@@ -254,10 +246,11 @@ export async function confirmOrder(
     items: saleItems,
     notes: manualNotes.join(' || ') || undefined,
     createdAt: new Date().toISOString(),
-    // Auditoría de descuento aplicado
     appliedDiscountLevel: (selectedCustomer?.discountLevel as any) || 'Bronze',
-    appliedDiscountPercent: +(((totals.subtotal > 0 ? totals.discount / totals.subtotal : 0) || 0) * 100).toFixed(2),
+    appliedDiscountPercent,
   } as any;
 
-  await (window as any).electronAPI.createSale(saleData);
+  const api = (window as any).electronAPI;
+  if (!api?.createSale) throw new Error('API_NOT_AVAILABLE');
+  await api.createSale(saleData);
 }

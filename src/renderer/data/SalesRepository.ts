@@ -1,9 +1,8 @@
 // Simple repository to interact with main process sales API
-import { InventoryMovement } from '../../shared/types';
 export interface SaleItemDTO {
   productId?: number;
-  categoryId?: string;
-  categoryName?: string;
+  categoryId: string;
+  categoryName: string;
   quantity: number;
   unitPrice: number;
   subtotal: number;
@@ -29,13 +28,13 @@ export interface SaleDTO extends CreateSaleDTO {
   status: 'Completada' | 'Cancelada' | 'Pendiente';
   createdAt: string;
   updatedAt: string;
-  inventoryMovements?: InventoryMovement[];
 }
 
 export interface ISalesRepository {
   createSale(data: CreateSaleDTO): Promise<SaleDTO>;
   getSales(): Promise<SaleDTO[]>;
   getRecentSales?(limit?: number): Promise<SaleDTO[]>;
+  getSalesByCustomer?(customerId: number): Promise<SaleDTO[]>;
 }
 
 export class SalesRepository implements ISalesRepository {
@@ -56,5 +55,10 @@ export class SalesRepository implements ISalesRepository {
     return [...all]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit);
+  }
+
+  async getSalesByCustomer(customerId: number): Promise<SaleDTO[]> {
+    // @ts-ignore
+    return await window.electronAPI.getSalesByCustomer(customerId);
   }
 }
