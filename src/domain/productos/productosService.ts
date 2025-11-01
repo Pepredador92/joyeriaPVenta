@@ -11,6 +11,7 @@ const normalizeDescription = (value?: string | null) => {
   const clean = (value ?? '').toString().trim();
   return clean || undefined;
 };
+const normalizeStatus = (value: string | undefined) => (value === 'Inactivo' ? 'Inactivo' : 'Activo');
 
 export async function loadCategoryCatalog(term?: string): Promise<Category[]> {
   if (!(window as any).electronAPI?.getCategoryCatalog) return [];
@@ -49,6 +50,11 @@ export function validateProducto(input: Partial<Product>): { ok: boolean; errors
   const stock = Number(input.stock);
   if (!Number.isInteger(stock) || stock < 0) errors.stock = 'Stock inválido';
 
+  const status = normalizeStatus(input.status as string | undefined);
+  if ((input.status !== undefined && input.status !== status) || !status) {
+    errors.status = 'Estado inválido';
+  }
+
   return { ok: Object.keys(errors).length === 0, errors };
 }
 
@@ -67,9 +73,8 @@ export async function createProducto(input: ProductoCreateInput): Promise<Produc
     stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
     category: normalizeCategory(input.category || ''),
     description: normalizeDescription(input.description),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  } as any;
+    status: normalizeStatus(input.status as string | undefined),
+  };
   return await (window as any).electronAPI.createProduct(payload);
 }
 
@@ -81,12 +86,14 @@ export async function updateProducto(id: number, input: ProductoUpdateInput): Pr
     sku: input.sku ?? 'x',
     category: input.category ?? 'x',
     stock: input.stock ?? 0,
+    status: input.status ?? 'Activo',
   });
   // Quitar errores de campos no provistos (dummy)
   if (input.name === undefined) delete base.errors.name;
   if (input.sku === undefined) delete base.errors.sku;
   if (input.category === undefined) delete base.errors.category;
   if (input.stock === undefined) delete base.errors.stock;
+  if (input.status === undefined) delete base.errors.status;
   if (Object.keys(base.errors).length) {
     const err = new Error('VALIDATION_ERROR');
     (err as any).fields = base.errors;
@@ -99,6 +106,7 @@ export async function updateProducto(id: number, input: ProductoUpdateInput): Pr
     description: input.description !== undefined ? normalizeDescription(input.description) : undefined,
     stock: input.stock !== undefined ? Math.max(0, Math.floor(Number(input.stock))) : undefined,
     price: input.price !== undefined ? Number(input.price) || 0 : undefined,
+    status: input.status !== undefined ? normalizeStatus(input.status as string | undefined) : undefined,
   };
   return await (window as any).electronAPI.updateProduct(id, patch);
 }

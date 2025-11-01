@@ -1,5 +1,7 @@
 // Tipos e interfaces para la aplicación de joyería
 
+export type ProductStatus = 'Activo' | 'Inactivo';
+
 export interface Product {
   id: number;
   sku: string;
@@ -9,6 +11,7 @@ export interface Product {
   category: string;
   categoryId?: string;
   description?: string;
+  status: ProductStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,6 +127,12 @@ export interface Setting {
   createdAt: string;
   updatedAt: string;
 }
+
+export type ProductCatalogEventType = 'ProductoCreado' | 'ProductoActualizado';
+
+export type ProductCatalogEvent =
+  | { type: 'ProductoCreado'; payload: Product }
+  | { type: 'ProductoActualizado'; payload: Product };
 
 // Canales IPC para comunicación entre procesos
 export const IPC_CHANNELS = {

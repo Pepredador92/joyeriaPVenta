@@ -18,8 +18,12 @@ import {
   computeTotals,
   confirmOrder as confirmOrderSvc,
   loadDiscountMapFromSettings,
+  filterActiveProducts,
+  computeCategoryOptionsFromProducts,
 } from '../../../domain/ventas/ventasService';
 import { searchCustomers } from '../../../domain/clientes/clientesService';
+import { eventBus } from '../../../shared/eventBus';
+import { ProductCatalogEvent } from '../../../shared/types';
 
 type ToastTone = 'info' | 'success' | 'error';
 
@@ -66,6 +70,9 @@ const formatMoneyForInput = (value: number) => {
   if (value === 0) return '0.00';
   return value.toFixed(2);
 };
+
+const arraysEqual = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((value, index) => value === b[index]);
 
 const buildInitialQuickSaleDraft = (categoryList: string[], preferredCategory?: string): QuickSaleDraft => {
   const normalizedPreferred = (preferredCategory || '').trim();
@@ -181,7 +188,6 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
       const rows = await api.getCategoryCatalog();
       if (!aliveRef.current) return;
       if (!Array.isArray(rows)) {
-        setCategories((prev) => (prev.length ? [] : prev));
         return;
       }
       const names = rows
@@ -209,6 +215,33 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
     });
     return () => { if (typeof off === 'function') off(); };
   }, [loadData, loadCategoryOptions]);
+
+  useEffect(() => {
+    const handleEvent = (event: ProductCatalogEvent) => {
+      const payload = event.payload;
+      setProducts((prev) => {
+        const index = prev.findIndex((p: any) => p.id === payload.id);
+        if (index === -1) {
+          const shouldInclude = filterActiveProducts([payload]).length > 0;
+          return shouldInclude ? [...prev, payload] : prev;
+        }
+        const next = [...prev];
+        next[index] = { ...next[index], ...payload };
+        return next;
+      });
+    };
+    const offCreate = eventBus.subscribe('ProductoCreado', handleEvent);
+    const offUpdate = eventBus.subscribe('ProductoActualizado', handleEvent);
+    return () => {
+      offCreate();
+      offUpdate();
+    };
+  }, []);
+
+  useEffect(() => {
+    const nextCategories = computeCategoryOptionsFromProducts(products);
+    setCategories((prev) => (arraysEqual(prev, nextCategories) ? prev : nextCategories));
+  }, [products]);
 
   useEffect(() => {
     if (!categories.length) return;

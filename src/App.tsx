@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
-import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD, Category } from './shared/types';
+import { DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD, Category, Product, ProductStatus } from './shared/types';
 import { VentasPage } from './presentation/modules/ventas';
 import { ClientesPage } from './presentation/modules/clientes/ClientesPage';
 import { InventarioPage } from './presentation/modules/inventario/InventarioPage';
@@ -30,6 +30,7 @@ import {
   getUniqueSKU,
   loadCategoryCatalog as loadCategoryCatalogSvc,
 } from './domain/productos/productosService';
+import { eventBus } from './shared/eventBus';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
 
@@ -634,12 +635,12 @@ const Dashboard = () => {
 
 
 const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; askConfirm: (message: string, detail?: string) => Promise<boolean> }> = ({ notify, askConfirm }) => {
-  const [products, setProducts] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<any>(null);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [newProduct, setNewProduct] = useState({
-    sku: '', name: '', price: 0, stock: 0, category: '', description: ''
+    sku: '', name: '', price: 0, stock: 0, category: '', description: '', status: 'Activo' as ProductStatus
   });
   const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
   const [isCategoryLoading, setIsCategoryLoading] = useState(false);
@@ -685,40 +686,56 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // Validar antes de enviar
-        const v = validateProductoSvc(newProduct);
-        if (!v.ok) {
-          const first = Object.values(v.errors)[0] || 'Datos inválidos';
-          notify(first, 'error');
-          return;
-        }
-        if (editingProduct) {
-          await updateProductoSvc(editingProduct.id, newProduct);
-          notify('Producto actualizado', 'success');
-        } else {
-          await createProductoSvc(newProduct as any);
-          notify('Producto creado', 'success');
-        }
-        resetForm();
-        loadProducts();
-      } catch (error) {
-        const err: any = error as any;
-        console.error('Error saving product:', err);
-        if (err?.message === 'VALIDATION_ERROR' && err.fields) {
-          const first = Object.values(err.fields)[0] as string;
-          notify(first || 'Error de validación', 'error');
-        } else {
-          notify('Error al guardar el producto', 'error');
-        }
+      const v = validateProductoSvc(newProduct);
+      if (!v.ok) {
+        const first = Object.values(v.errors)[0] || 'Datos inválidos';
+        notify(first, 'error');
+        return;
       }
-    };
+      if (editingProduct) {
+        const updated = await updateProductoSvc(editingProduct.id, newProduct);
+        if (!updated) {
+          notify('No se pudo actualizar el producto', 'error');
+        } else {
+          notify('Producto actualizado', 'success');
+          eventBus.publish({ type: 'ProductoActualizado', payload: updated });
+        }
+      } else {
+        const created = await createProductoSvc(newProduct as any);
+        notify('Producto creado', 'success');
+        eventBus.publish({ type: 'ProductoCreado', payload: created });
+      }
+      resetForm();
+      loadProducts();
+    } catch (error) {
+      const err: any = error as any;
+      console.error('Error saving product:', err);
+      if (err?.code === 'DUPLICATE_SKU' || err?.message === 'DUPLICATE_SKU') {
+        notify('SKU duplicado', 'error');
+      } else if (err?.code === 'INVALID_SKU' || err?.message === 'INVALID_SKU') {
+        notify('SKU inválido', 'error');
+      } else if (err?.message === 'VALIDATION_ERROR' && err.fields) {
+        const first = Object.values(err.fields)[0] as string;
+        notify(first || 'Error de validación', 'error');
+      } else {
+        notify('Error al guardar el producto', 'error');
+      }
+    }
+  };
 
   const handleDelete = async (id: number) => {
     const shouldDelete = await askConfirm('¿Estás seguro de que quieres eliminar este producto?');
     if (!shouldDelete) return;
     try {
+      const target = products.find((p) => p.id === id) || null;
       await deleteProductoSvc(id);
       notify('Producto eliminado', 'success');
+      if (target) {
+        eventBus.publish({
+          type: 'ProductoActualizado',
+          payload: { ...target, status: 'Inactivo', stock: target.stock, updatedAt: new Date().toISOString() },
+        });
+      }
       loadProducts();
     } catch (error) {
       console.error('Error deleting product:', error);
@@ -726,7 +743,7 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
     }
   };
 
-  const handleEdit = (product: any) => {
+  const handleEdit = (product: Product) => {
     setEditingProduct(product);
     setNewProduct({
       sku: product.sku,
@@ -734,7 +751,8 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
       price: product.price,
       stock: product.stock,
       category: product.category,
-      description: product.description || ''
+      description: product.description || '',
+      status: (product.status === 'Inactivo' ? 'Inactivo' : 'Activo') as ProductStatus,
     });
     setShowCategorySuggestions(true);
     setCategorySuggestions([]);
@@ -745,14 +763,14 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
   const handleShowAddForm = () => {
     setEditingProduct(null);
     const uniqueSku = getUniqueSKU(products);
-    setNewProduct({ sku: uniqueSku, name: '', price: 0, stock: 0, category: '', description: '' });
+    setNewProduct({ sku: uniqueSku, name: '', price: 0, stock: 0, category: '', description: '', status: 'Activo' as ProductStatus });
     setCategorySuggestions([]);
     setShowCategorySuggestions(true);
     setShowAddForm(true);
   };
 
   const resetForm = () => {
-    setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: '', description: '' });
+    setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: '', description: '', status: 'Activo' as ProductStatus });
     setEditingProduct(null);
     setCategorySuggestions([]);
     setShowCategorySuggestions(false);
@@ -875,6 +893,18 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
                   style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                 />
               </div>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Estado:</label>
+                <select
+                  value={newProduct.status}
+                  onChange={(e) => setNewProduct({ ...newProduct, status: e.target.value as ProductStatus })}
+                  required
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                >
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+              </div>
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '5px' }}>Descripción:</label>
                 <textarea
@@ -920,6 +950,7 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Producto</th>
               <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Categoría</th>
               <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Stock</th>
+              <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Estado</th>
               <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Acciones</th>
             </tr>
           </thead>
@@ -956,7 +987,23 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
                   </span>
                 </td>
                 <td style={{ padding: '12px', textAlign: 'center' }}>
-                  <button 
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      background: product.status === 'Activo' ? '#e8f5e9' : '#ffebee',
+                      color: product.status === 'Activo' ? '#2e7d32' : '#c62828',
+                      border: '1px solid ' + (product.status === 'Activo' ? '#a5d6a7' : '#ef9a9a')
+                    }}
+                  >
+                    {product.status === 'Activo' ? 'Activo' : 'Inactivo'}
+                  </span>
+                </td>
+                <td style={{ padding: '12px', textAlign: 'center' }}>
+                  <button
                     onClick={() => handleEdit(product)}
                     style={{ marginRight: '8px', padding: '4px 8px', border: '1px solid #2196f3', background: 'white', color: '#2196f3', borderRadius: '4px', cursor: 'pointer' }}
                   >

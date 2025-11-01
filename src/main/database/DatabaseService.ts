@@ -36,6 +36,13 @@ class DatabaseService {
   private salesFilePath: string | null = null;
   private cashSessionsFilePath: string | null = null;
 
+  private normalizeSku(value: string | undefined | null): string {
+    return (value || '')
+      .toString()
+      .trim()
+      .toUpperCase();
+  }
+
   private normalizeCategoryId(name: string | undefined | null): string {
     return (name || '')
       .toString()
@@ -148,11 +155,23 @@ class DatabaseService {
   async createProduct(productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
     const nowIso = new Date().toISOString();
     const cleanName = (productData.name || '').toString().trim();
-    const cleanSku = (productData.sku || '').toString().trim().toUpperCase();
+    const cleanSku = this.normalizeSku(productData.sku);
+    if (!cleanSku) {
+      const err = new Error('INVALID_SKU');
+      (err as any).code = 'INVALID_SKU';
+      throw err;
+    }
+    const duplicate = this.products.some((p) => this.normalizeSku(p.sku) === cleanSku);
+    if (duplicate) {
+      const err = new Error('DUPLICATE_SKU');
+      (err as any).code = 'DUPLICATE_SKU';
+      throw err;
+    }
     const cleanDescription = productData.description?.toString().trim() || undefined;
     const cleanStock = Math.max(0, Math.floor(Number(productData.stock || 0)));
     const cleanPrice = Number(productData.price ?? 0);
     const categoryEntry = this.ensureCategory(productData.category || productData.categoryId || 'Otros');
+    const status = productData.status === 'Inactivo' ? 'Inactivo' : 'Activo';
     const newProduct: Product = {
       id: Math.max(...this.products.map(p => p.id), 0) + 1,
       sku: cleanSku,
@@ -162,6 +181,7 @@ class DatabaseService {
       category: categoryEntry.name,
       categoryId: categoryEntry.id,
       description: cleanDescription,
+      status,
       createdAt: nowIso,
       updatedAt: nowIso
     };
@@ -177,10 +197,33 @@ class DatabaseService {
 
     const nowIso = new Date().toISOString();
     const current = this.products[index];
+    const nextSku =
+      productData.sku !== undefined ? this.normalizeSku(productData.sku) : this.normalizeSku(current.sku);
+    if (!nextSku) {
+      const err = new Error('INVALID_SKU');
+      (err as any).code = 'INVALID_SKU';
+      throw err;
+    }
+    const duplicate = this.products.some(
+      (p, idx) => idx !== index && this.normalizeSku(p.sku) === nextSku
+    );
+    if (duplicate) {
+      const err = new Error('DUPLICATE_SKU');
+      (err as any).code = 'DUPLICATE_SKU';
+      throw err;
+    }
+    const nextStatus =
+      productData.status !== undefined
+        ? productData.status === 'Inactivo'
+          ? 'Inactivo'
+          : 'Activo'
+        : current.status === 'Inactivo'
+        ? 'Inactivo'
+        : 'Activo';
     const next: Product = {
       ...current,
       ...productData,
-      sku: productData.sku !== undefined ? (productData.sku || '').toString().trim().toUpperCase() : current.sku,
+      sku: nextSku,
       name: productData.name !== undefined ? (productData.name || '').toString().trim() : current.name,
       price: productData.price !== undefined ? Number(productData.price) || 0 : current.price,
       stock:
@@ -191,6 +234,7 @@ class DatabaseService {
         productData.description !== undefined
           ? (productData.description || '').toString().trim() || undefined
           : current.description,
+      status: nextStatus,
       updatedAt: nowIso,
     };
     if (productData.category !== undefined || productData.categoryId !== undefined) {
@@ -771,6 +815,7 @@ class DatabaseService {
               category: String(p.category ?? ''),
               categoryId: typeof p.categoryId === 'string' ? this.normalizeCategoryId(p.categoryId) : undefined,
               description: typeof p.description === 'string' ? p.description : undefined,
+              status: p.status === 'Inactivo' ? 'Inactivo' : 'Activo',
               createdAt: p.createdAt || new Date().toISOString(),
               updatedAt: p.updatedAt || new Date().toISOString()
             }));

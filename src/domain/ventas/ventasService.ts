@@ -15,6 +15,8 @@ const formatCategoryName = (value: string) => {
     .trim();
 };
 
+const resolveProductStatus = (value: unknown) => (value === 'Inactivo' ? 'Inactivo' : 'Activo');
+
 export type OrderItem = {
   id: number;
   type: 'product' | 'manual';
@@ -42,6 +44,29 @@ export type VentasData = {
   customers: any[];
   recentSales: any[];
 };
+
+export function filterActiveProducts<T extends { status?: string; stock?: number }>(products: T[]): T[] {
+  return (products || []).filter((product) => {
+    const status = resolveProductStatus((product as any)?.status);
+    const stock = Number((product as any)?.stock ?? 0);
+    return status === 'Activo' && Number.isFinite(stock) && stock >= 0;
+  });
+}
+
+export function computeCategoryOptionsFromProducts(
+  products: Array<{ status?: string; stock?: number; category?: string; categoryName?: string }>
+): string[] {
+  const active = filterActiveProducts(products);
+  const seen = new Set<string>();
+  const categories: string[] = [];
+  for (const product of active) {
+    const label = formatCategoryName((product as any)?.category || (product as any)?.categoryName || '');
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    categories.push(label);
+  }
+  return categories.sort((a, b) => a.localeCompare(b, 'es'));
+}
 
 export function getInitialPaymentMethod(): PaymentMethod {
   try {
@@ -187,8 +212,9 @@ export function computeFilteredCustomers(customers: any[], customerQuery: string
 }
 
 export function computeFilteredProducts(products: any[], term: string): any[] {
+  const active = filterActiveProducts(products);
   const q = (term || '').toLowerCase();
-  return products.filter(
+  return active.filter(
     (p: any) => (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q)
   );
 }
