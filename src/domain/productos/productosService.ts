@@ -1,4 +1,5 @@
 import { Category, Product } from '../../shared/types';
+import { eventBus } from '../../shared/eventBus';
 
 // Tipos
 export type Producto = Product;
@@ -75,7 +76,12 @@ export async function createProducto(input: ProductoCreateInput): Promise<Produc
     description: normalizeDescription(input.description),
     status: normalizeStatus(input.status as string | undefined),
   };
-  return await (window as any).electronAPI.createProduct(payload);
+  const created = (await (window as any).electronAPI.createProduct(payload)) as Product;
+  if (created) {
+    eventBus.publish({ type: 'ProductoCreado', payload: created });
+    eventBus.publish({ type: 'StockActualizado', payload: { id: created.id, stock: created.stock } });
+  }
+  return created;
 }
 
 // Actualizar
@@ -108,12 +114,23 @@ export async function updateProducto(id: number, input: ProductoUpdateInput): Pr
     price: input.price !== undefined ? Number(input.price) || 0 : undefined,
     status: input.status !== undefined ? normalizeStatus(input.status as string | undefined) : undefined,
   };
-  return await (window as any).electronAPI.updateProduct(id, patch);
+  const updated = (await (window as any).electronAPI.updateProduct(id, patch)) as Product | null;
+  if (updated) {
+    eventBus.publish({ type: 'ProductoActualizado', payload: updated });
+    if (patch.stock !== undefined) {
+      eventBus.publish({ type: 'StockActualizado', payload: { id: updated.id, stock: updated.stock } });
+    }
+  }
+  return updated;
 }
 
 // Eliminar
 export async function deleteProducto(id: number): Promise<boolean> {
-  return await (window as any).electronAPI.deleteProduct(id);
+  const removed = await (window as any).electronAPI.deleteProduct(id);
+  if (removed) {
+    eventBus.publish({ type: 'ProductoEliminado', payload: { id } });
+  }
+  return removed;
 }
 
 // Reglas de stock (para UI)

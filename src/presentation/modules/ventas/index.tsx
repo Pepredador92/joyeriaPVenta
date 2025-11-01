@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   OrderItem,
   PaymentMethod,
-  QuickSale,
   DiscountMap,
   getInitialPaymentMethod,
   loadVentasData,
@@ -10,7 +9,6 @@ import {
   readTaxRateFromLocal,
   readTaxRateFromSettings,
   addProductToOrder as addProductToOrderSvc,
-  addManualQuickSale as addManualQuickSaleSvc,
   removeItem as removeItemSvc,
   updateQty as updateQtySvc,
   updatePrice as updatePriceSvc,
@@ -18,7 +16,6 @@ import {
   computeTotals,
   confirmOrder as confirmOrderSvc,
   loadDiscountMapFromSettings,
-  filterActiveProducts,
   computeCategoryOptionsFromProducts,
 } from '../../../domain/ventas/ventasService';
 import { searchCustomers } from '../../../domain/clientes/clientesService';
@@ -27,25 +24,8 @@ import { ProductCatalogEvent } from '../../../shared/types';
 
 type ToastTone = 'info' | 'success' | 'error';
 
-type QuickSaleDraft = {
-  fecha: string;
-  categoria: string;
-  cantidad: string;
-  precioUnitario: string;
-  notas: string;
-};
-
 type VentasPageProps = {
   onNotify?: (message: string, tone?: ToastTone) => void;
-};
-
-const sanitizeIntegerDraft = (raw: string, fallback: number): { value: number; display: string } => {
-  const digits = (raw ?? '').toString().replace(/[^0-9]/g, '');
-  if (!digits) {
-    return { value: fallback, display: String(fallback) };
-  }
-  const parsed = Math.max(fallback, parseInt(digits, 10));
-  return { value: parsed, display: String(parsed) };
 };
 
 const sanitizeMoneyDraft = (raw: string): { value: number | null; display: string } => {
@@ -73,17 +53,6 @@ const formatMoneyForInput = (value: number) => {
 
 const arraysEqual = (a: string[], b: string[]) =>
   a.length === b.length && a.every((value, index) => value === b[index]);
-
-const buildInitialQuickSaleDraft = (categoryList: string[], preferredCategory?: string): QuickSaleDraft => {
-  const normalizedPreferred = (preferredCategory || '').trim();
-  return {
-    fecha: new Date().toISOString().split('T')[0],
-    categoria: normalizedPreferred || categoryList[0] || '',
-    cantidad: '1',
-    precioUnitario: '',
-    notas: '',
-  };
-};
 
 const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) => {
   const [q, setQ] = useState('');
@@ -146,12 +115,8 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => getInitialPaymentMethod());
 
   const [priceDrafts, setPriceDrafts] = useState<Record<number, string>>({});
-  const categoryInputRef = useRef<HTMLInputElement | null>(null);
-  const quantityInputRef = useRef<HTMLInputElement | null>(null);
-  const priceInputRef = useRef<HTMLInputElement | null>(null);
-  const notesInputRef = useRef<HTMLInputElement | null>(null);
-
-  const [quickSaleDraft, setQuickSaleDraft] = useState<QuickSaleDraft>(() => buildInitialQuickSaleDraft([]));
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [onlyInStock, setOnlyInStock] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
@@ -181,60 +146,70 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
     }
   }, []);
 
-  const loadCategoryOptions = useCallback(async () => {
-    try {
-      const api = (window as any).electronAPI;
-      if (!api?.getCategoryCatalog) return;
-      const rows = await api.getCategoryCatalog();
-      if (!aliveRef.current) return;
-      if (!Array.isArray(rows)) {
-        return;
-      }
-      const names = rows
-        .map((cat: any) => (typeof cat?.name === 'string' ? cat.name.trim() : ''))
-        .filter((name: string) => name);
-      const unique = Array.from(new Set(names));
-      setCategories((prev) => {
-        if (prev.length === unique.length && prev.every((value, index) => value === unique[index])) {
-          return prev;
-        }
-        return unique;
-      });
-    } catch (err) {
-      if (aliveRef.current) {
-        console.warn('No se pudieron cargar categorías', err);
-      }
-    }
-  }, []);
-
   useEffect(() => {
     loadData();
-    loadCategoryOptions();
     const off = (window as any).electronAPI?.onSalesChanged?.(() => {
       loadData().catch(() => {});
     });
     return () => { if (typeof off === 'function') off(); };
-  }, [loadData, loadCategoryOptions]);
+  }, [loadData]);
 
   useEffect(() => {
-    const handleEvent = (event: ProductCatalogEvent) => {
-      const payload = event.payload;
+    const handleCatalogEvent = (event: ProductCatalogEvent) => {
       setProducts((prev) => {
-        const index = prev.findIndex((p: any) => p.id === payload.id);
-        if (index === -1) {
-          const shouldInclude = filterActiveProducts([payload]).length > 0;
-          return shouldInclude ? [...prev, payload] : prev;
+        if (!Array.isArray(prev)) return prev;
+        switch (event.type) {
+          case 'ProductoCreado': {
+            const created = event.payload;
+            const index = prev.findIndex((p: any) => p.id === created.id);
+            if (index !== -1) {
+              const next = [...prev];
+              next[index] = { ...next[index], ...created };
+              return next;
+            }
+            return [...prev, created];
+          }
+          case 'ProductoActualizado': {
+            const updated = event.payload;
+            const index = prev.findIndex((p: any) => p.id === updated.id);
+            if (index === -1) {
+              return [...prev, updated];
+            }
+            const next = [...prev];
+            next[index] = { ...next[index], ...updated };
+            return next;
+          }
+          case 'ProductoEliminado': {
+            const id = event.payload.id;
+            if (!prev.some((p: any) => p.id === id)) {
+              return prev;
+            }
+            return prev.filter((p: any) => p.id !== id);
+          }
+          case 'StockActualizado': {
+            const { id, stock } = event.payload;
+            let changed = false;
+            const next = prev.map((p: any) => {
+              if (p.id !== id) return p;
+              changed = true;
+              return { ...p, stock };
+            });
+            return changed ? next : prev;
+          }
+          default:
+            return prev;
         }
-        const next = [...prev];
-        next[index] = { ...next[index], ...payload };
-        return next;
       });
     };
-    const offCreate = eventBus.subscribe('ProductoCreado', handleEvent);
-    const offUpdate = eventBus.subscribe('ProductoActualizado', handleEvent);
+    const offCreate = eventBus.subscribe('ProductoCreado', handleCatalogEvent);
+    const offUpdate = eventBus.subscribe('ProductoActualizado', handleCatalogEvent);
+    const offDelete = eventBus.subscribe('ProductoEliminado', handleCatalogEvent);
+    const offStock = eventBus.subscribe('StockActualizado', handleCatalogEvent);
     return () => {
       offCreate();
       offUpdate();
+      offDelete();
+      offStock();
     };
   }, []);
 
@@ -244,17 +219,13 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
   }, [products]);
 
   useEffect(() => {
-    if (!categories.length) return;
-    setQuickSaleDraft((prev) => {
-      if ((prev.categoria || '').trim()) {
-        return prev;
-      }
-      if (document.activeElement === categoryInputRef.current) {
-        return prev;
-      }
-      return { ...prev, categoria: categories[0] };
-    });
-  }, [categories]);
+    if (!categoryFilter) return;
+    const normalized = categoryFilter.trim().toLowerCase();
+    const available = categories.map((cat) => cat.trim().toLowerCase());
+    if (!available.includes(normalized)) {
+      setCategoryFilter('');
+    }
+  }, [categories, categoryFilter]);
 
   useEffect(() => {
     // Inicial rápido por localStorage para no bloquear UI
@@ -299,28 +270,6 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
       return changed ? next : prev;
     });
   }, [orderItems]);
-
-  const submitQuickSale = useCallback((e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedCategory = quickSaleDraft.categoria.trim() || categories[0] || '';
-    const normalizedQuickSale: QuickSale = {
-      fecha: quickSaleDraft.fecha,
-      categoria: trimmedCategory,
-      cantidad: sanitizeIntegerDraft(quickSaleDraft.cantidad, 1).value,
-      precioUnitario: sanitizeMoneyDraft(quickSaleDraft.precioUnitario).value ?? 0,
-      notas: quickSaleDraft.notas.trim(),
-    };
-    const next = addManualQuickSaleSvc(orderItems, normalizedQuickSale);
-    if (next === orderItems) {
-      onNotify?.('Cantidad y precio deben ser mayores a 0', 'error');
-      return;
-    }
-    setOrderItems(next);
-    setQuickSaleDraft(buildInitialQuickSaleDraft(categories, trimmedCategory));
-    if (quantityInputRef.current) {
-      quantityInputRef.current.focus();
-    }
-  }, [orderItems, quickSaleDraft, categories]);
 
   // Edición de líneas
   const removeItem = useCallback((id: number) => {
@@ -388,8 +337,8 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
   }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData]);
 
   const filteredProducts = useMemo(
-    () => computeFilteredProducts(products, searchTerm),
-    [products, searchTerm]
+    () => computeFilteredProducts(products, searchTerm, categoryFilter, onlyInStock),
+    [products, searchTerm, categoryFilter, onlyInStock]
   );
 
   return (
@@ -410,39 +359,24 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
           <input type="text" placeholder="🔍 Buscar productos por nombre o SKU…" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}
             style={{ width:'100%', padding:'14px 16px', border:'2px solid #e2e8f0', borderRadius:12, background:'#f7fafc' }} />
         </div>
-        {/* Venta rápida */}
+        {/* Panel de filtros para catálogo */}
         <div style={{ marginBottom: 18, padding: 14, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fafafa' }}>
           <h3 style={{ margin: 0 }}>Nueva Venta</h3>
-          <form onSubmit={submitQuickSale} style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, marginTop:10 }}>
+          <form
+            id="ventas-filtros"
+            onSubmit={(e) => e.preventDefault()}
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12, marginTop: 10 }}
+          >
             <div>
-              <label style={{ display:'block', fontSize:12, color:'#666' }}>Fecha</label>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Categoría</label>
               <input
-                type="date"
-                value={quickSaleDraft.fecha}
-                onChange={(e) =>
-                  setQuickSaleDraft((prev) => ({
-                    ...prev,
-                    fecha: e.target.value,
-                  }))
-                }
-                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}
-              />
-            </div>
-            <div>
-              <label style={{ display:'block', fontSize:12, color:'#666' }}>Categoría</label>
-              <input
-                ref={categoryInputRef}
+                id="filtro-categoria"
                 type="text"
                 list="ventas-category-catalog"
-                value={quickSaleDraft.categoria}
-                onChange={(e) =>
-                  setQuickSaleDraft((prev) => ({
-                    ...prev,
-                    categoria: e.target.value,
-                  }))
-                }
-                placeholder="Selecciona o crea"
-                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}
+                placeholder="Todas"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
               />
               <datalist id="ventas-category-catalog">
                 {categories.map((cat) => (
@@ -451,80 +385,27 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
               </datalist>
             </div>
             <div>
-              <label style={{ display:'block', fontSize:12, color:'#666' }}>Cantidad</label>
+              <label style={{ display: 'block', fontSize: 12, color: '#666' }}>Solo en stock</label>
               <input
-                ref={quantityInputRef}
-                type="number"
-                min={1}
-                value={quickSaleDraft.cantidad}
-                onChange={(e) =>
-                  setQuickSaleDraft((prev) => ({
-                    ...prev,
-                    cantidad: e.target.value,
-                  }))
-                }
-                onBlur={() =>
-                  setQuickSaleDraft((prev) => ({
-                    ...prev,
-                    cantidad: sanitizeIntegerDraft(prev.cantidad, 1).display,
-                  }))
-                }
-                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}
+                id="filtro-stock"
+                type="checkbox"
+                checked={onlyInStock}
+                onChange={(e) => setOnlyInStock(e.target.checked)}
+                style={{ transform: 'scale(1.1)' }}
               />
             </div>
-            <div>
-              <label style={{ display:'block', fontSize:12, color:'#666' }}>Precio Unitario</label>
-              <input
-                ref={priceInputRef}
-                type="number"
-                min={0}
-                step="0.01"
-                value={quickSaleDraft.precioUnitario}
-                onChange={(e) =>
-                  setQuickSaleDraft((prev) => ({
-                    ...prev,
-                    precioUnitario: e.target.value,
-                  }))
-                }
-                onBlur={() =>
-                  setQuickSaleDraft((prev) => {
-                    const sanitized = sanitizeMoneyDraft(prev.precioUnitario);
-                    return {
-                      ...prev,
-                      precioUnitario: sanitized.value === null ? '' : sanitized.display,
-                    };
-                  })
-                }
-                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}
-              />
-            </div>
-            <div style={{ gridColumn:'1/-1' }}>
-              <label style={{ display:'block', fontSize:12, color:'#666' }}>Notas</label>
-              <input
-                ref={notesInputRef}
-                type="text"
-                value={quickSaleDraft.notas}
-                onChange={(e) =>
-                  setQuickSaleDraft((prev) => ({
-                    ...prev,
-                    notas: (e.target as HTMLInputElement).value,
-                  }))
-                }
-                placeholder="Opcional"
-                style={{ width:'100%', padding:8, border:'1px solid #ddd', borderRadius:6 }}
-              />
-            </div>
-            <div style={{ display:'flex', gap:12, alignItems:'center' }}>
-              <button type="submit" style={{ background:'#2196f3', color:'#fff', border:'none', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Agregar al pedido</button>
+            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 12, alignItems: 'center' }}>
               <button
+                id="btn-limpiar-filtros"
                 type="button"
                 onClick={() => {
-                  setQuickSaleDraft(buildInitialQuickSaleDraft(categories));
-                  if (categoryInputRef.current) {
-                    categoryInputRef.current.focus();
-                  }
+                  setCategoryFilter('');
+                  setOnlyInStock(false);
                 }}
-                style={{ background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 14px', cursor:'pointer' }}>Limpiar</button>
+                style={{ background: '#fff', color: '#333', border: '1px solid #ddd', borderRadius: 6, padding: '10px 14px', cursor: 'pointer' }}
+              >
+                Limpiar filtros
+              </button>
             </div>
           </form>
         </div>
@@ -534,9 +415,8 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
               onClick={() => addProductToOrder(product)}
               onMouseOver={(e) => { if (product.stock>0) { (e.currentTarget as HTMLDivElement).style.transform='translateY(-5px)'; (e.currentTarget as HTMLDivElement).style.boxShadow='0 8px 25px rgba(0,0,0,0.1)'; (e.currentTarget as HTMLDivElement).style.borderColor='#4299e1'; } }}
               onMouseOut={(e) => { (e.currentTarget as HTMLDivElement).style.transform='translateY(0)'; (e.currentTarget as HTMLDivElement).style.boxShadow='0 4px 15px rgba(0,0,0,0.05)'; (e.currentTarget as HTMLDivElement).style.borderColor='#e2e8f0'; }}>
-              <h4 style={{ margin:'0 0 12px', color: product.stock>0? '#1a202c':'#a0aec0', fontSize:'1.1rem', fontWeight:600 }}>{product.name}</h4>
+              <h4 style={{ margin: '0 0 12px', color: product.stock > 0 ? '#1a202c' : '#a0aec0', fontSize: '1.3rem', fontWeight: 700 }}>{product.name}</h4>
               <p style={{ margin:'8px 0', color:'#718096', fontSize:14, fontFamily:'monospace', background:'#f7fafc', padding:'4px 8px', borderRadius:6, display:'inline-block' }}>SKU: {product.sku}</p>
-              <p style={{ margin:'12px 0', fontSize:24, fontWeight:'bold', color:'#2b6cb0' }}>${product.price.toFixed(2)}</p>
               <p style={{ margin:'8px 0', fontSize:14, color: product.stock<10? '#e53e3e':'#4a5568', fontWeight: product.stock<10? 'bold':'normal' }}>
                 Stock: {product.stock}{product.stock < 10 && product.stock > 0 && ' ⚠️ (Bajo)'}{product.stock === 0 && ' ❌ (Agotado)'}
               </p>

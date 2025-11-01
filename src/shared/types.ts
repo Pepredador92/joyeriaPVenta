@@ -128,11 +128,17 @@ export interface Setting {
   updatedAt: string;
 }
 
-export type ProductCatalogEventType = 'ProductoCreado' | 'ProductoActualizado';
+export type ProductCatalogEventType =
+  | 'ProductoCreado'
+  | 'ProductoActualizado'
+  | 'ProductoEliminado'
+  | 'StockActualizado';
 
 export type ProductCatalogEvent =
   | { type: 'ProductoCreado'; payload: Product }
-  | { type: 'ProductoActualizado'; payload: Product };
+  | { type: 'ProductoActualizado'; payload: Product }
+  | { type: 'ProductoEliminado'; payload: { id: number } }
+  | { type: 'StockActualizado'; payload: { id: number; stock: number } };
 
 // Canales IPC para comunicación entre procesos
 export const IPC_CHANNELS = {

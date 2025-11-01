@@ -211,12 +211,31 @@ export function computeFilteredCustomers(customers: any[], customerQuery: string
     .slice(0, 50);
 }
 
-export function computeFilteredProducts(products: any[], term: string): any[] {
+export function computeFilteredProducts(
+  products: any[],
+  term: string,
+  category?: string,
+  onlyInStock?: boolean
+): any[] {
   const active = filterActiveProducts(products);
-  const q = (term || '').toLowerCase();
-  return active.filter(
-    (p: any) => (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q)
-  );
+  const q = (term || '').trim().toLowerCase();
+  const normalizedCategory = (category || '').trim().toLowerCase();
+  return active.filter((p: any) => {
+    const productCategory = ((p.categoryName ?? p.category) || '').toString().trim().toLowerCase();
+    const matchesQuery = !q
+      || (p.name || '').toLowerCase().includes(q)
+      || (p.sku || '').toLowerCase().includes(q)
+      || productCategory.includes(q);
+    if (!matchesQuery) return false;
+    const matchesCategory = !normalizedCategory
+      || productCategory === normalizedCategory;
+    if (!matchesCategory) return false;
+    if (onlyInStock) {
+      const stock = Number(p.stock ?? 0);
+      if (!(stock > 0)) return false;
+    }
+    return true;
+  });
 }
 
 export function computeTotals(items: OrderItem[], selectedCustomer: any, discountMap: DiscountMap, taxRate: number) {

@@ -30,7 +30,6 @@ import {
   getUniqueSKU,
   loadCategoryCatalog as loadCategoryCatalogSvc,
 } from './domain/productos/productosService';
-import { eventBus } from './shared/eventBus';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
 
@@ -698,12 +697,10 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
           notify('No se pudo actualizar el producto', 'error');
         } else {
           notify('Producto actualizado', 'success');
-          eventBus.publish({ type: 'ProductoActualizado', payload: updated });
         }
       } else {
-        const created = await createProductoSvc(newProduct as any);
+        await createProductoSvc(newProduct as any);
         notify('Producto creado', 'success');
-        eventBus.publish({ type: 'ProductoCreado', payload: created });
       }
       resetForm();
       loadProducts();
@@ -727,15 +724,8 @@ const Products: React.FC<{ notify: (message: string, tone?: ToastTone) => void; 
     const shouldDelete = await askConfirm('¿Estás seguro de que quieres eliminar este producto?');
     if (!shouldDelete) return;
     try {
-      const target = products.find((p) => p.id === id) || null;
       await deleteProductoSvc(id);
       notify('Producto eliminado', 'success');
-      if (target) {
-        eventBus.publish({
-          type: 'ProductoActualizado',
-          payload: { ...target, status: 'Inactivo', stock: target.stock, updatedAt: new Date().toISOString() },
-        });
-      }
       loadProducts();
     } catch (error) {
       console.error('Error deleting product:', error);

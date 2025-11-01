@@ -1,4 +1,5 @@
 import { Product } from '../../shared/types';
+import { eventBus } from '../../shared/eventBus';
 
 // Tipos
 export type InventarioItem = Product;
@@ -71,7 +72,11 @@ export async function registrarEntrada(mov: MovimientoInventario): Promise<Produ
   }
   const cant = Number(mov.cantidad || 0);
   const nuevo = (product!.stock ?? 0) + cant;
-  const updated = await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo });
+  const updated = (await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo })) as Product | null;
+  if (updated) {
+    eventBus.publish({ type: 'ProductoActualizado', payload: updated });
+    eventBus.publish({ type: 'StockActualizado', payload: { id: updated.id, stock: updated.stock } });
+  }
   (window as any).electronAPI?.logInfo?.(`inventario_entrada: product=${product!.id}, +${cant}, stock=${nuevo}${mov.documento ? ', doc=' + mov.documento : ''}`);
   return updated;
 }
@@ -88,7 +93,11 @@ export async function registrarSalida(mov: MovimientoInventario): Promise<Produc
   }
   const cant = Number(mov.cantidad || 0);
   const nuevo = Math.max(0, (product!.stock ?? 0) - cant);
-  const updated = await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo });
+  const updated = (await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo })) as Product | null;
+  if (updated) {
+    eventBus.publish({ type: 'ProductoActualizado', payload: updated });
+    eventBus.publish({ type: 'StockActualizado', payload: { id: updated.id, stock: updated.stock } });
+  }
   (window as any).electronAPI?.logInfo?.(`inventario_salida: product=${product!.id}, -${cant}, stock=${nuevo}${mov.documento ? ', doc=' + mov.documento : ''}`);
   return updated;
 }
@@ -104,7 +113,11 @@ export async function ajustarStock(mov: MovimientoInventario): Promise<Product |
     throw err;
   }
   const nuevo = Number(mov.nuevoStock);
-  const updated = await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo });
+  const updated = (await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo })) as Product | null;
+  if (updated) {
+    eventBus.publish({ type: 'ProductoActualizado', payload: updated });
+    eventBus.publish({ type: 'StockActualizado', payload: { id: updated.id, stock: updated.stock } });
+  }
   (window as any).electronAPI?.logInfo?.(`inventario_ajuste: product=${product!.id}, nuevo=${nuevo}${mov.razon ? ', razon=' + mov.razon : ''}${mov.documento ? ', doc=' + mov.documento : ''}`);
   return updated;
 }
