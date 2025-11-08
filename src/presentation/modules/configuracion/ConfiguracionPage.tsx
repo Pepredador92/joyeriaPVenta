@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   loadSettings as loadSettingsSvc,
   updateSettings as updateSettingsSvc,
@@ -26,6 +26,67 @@ import {
   CustomerLevelDraft,
 } from '../../../domain/configuracion/configuracionService';
 import { Sale, CustomerLevel, DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from '../../../shared/types';
+
+const TooltipHint: React.FC<{ id: string; label: string; description: string }> = ({ id, label, description }) => {
+  const [visible, setVisible] = useState(false);
+  const show = () => setVisible(true);
+  const hide = () => setVisible(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', marginLeft: 4 }}>
+      <button
+        type="button"
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') hide();
+        }}
+        aria-haspopup="true"
+        aria-expanded={visible}
+        aria-label={label}
+        aria-describedby={visible ? id : undefined}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: '#555',
+          cursor: 'help',
+          padding: 0,
+          fontSize: 16,
+          lineHeight: 1,
+        }}
+      >
+        ?
+      </button>
+      <span
+        role="tooltip"
+        id={id}
+        style={{
+          position: 'absolute',
+          top: '120%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#111',
+          color: '#fff',
+          padding: '6px 8px',
+          borderRadius: 4,
+          whiteSpace: 'pre-line',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          fontSize: 12,
+          maxWidth: 220,
+          zIndex: 10,
+          pointerEvents: 'none',
+          opacity: visible ? 1 : 0,
+          visibility: visible ? 'visible' : 'hidden',
+          transition: 'opacity 120ms ease-in-out',
+        }}
+        aria-hidden={visible ? undefined : true}
+      >
+        {description}
+      </span>
+    </span>
+  );
+};
 
 type ToastTone = 'info' | 'success' | 'error';
 
@@ -55,6 +116,8 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
   const [editingLevelId, setEditingLevelId] = useState<number | null>(null);
   const [levelErrors, setLevelErrors] = useState<Record<string, string>>({});
   const [recalculatingLevels, setRecalculatingLevels] = useState(false);
+  const levelListRef = useRef<HTMLDivElement | null>(null);
+  const levelNameInputRef = useRef<HTMLInputElement | null>(null);
   const emptyLevelDraft: CustomerLevelDraft = {
     name: '',
     discountPercent: 0,
@@ -74,10 +137,15 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
       return a.name.localeCompare(b.name, 'es');
     });
 
+  const focusLevelName = () => {
+    setTimeout(() => levelNameInputRef.current?.focus({ preventScroll: true }), 0);
+  };
+
   const resetLevelForm = () => {
     setLevelDraft(emptyLevelDraft);
     setEditingLevelId(null);
     setLevelErrors({});
+    focusLevelName();
   };
 
   const loadLevels = async () => {
@@ -172,6 +240,7 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
     setLevelSaving(true);
     try {
       const payload = prepareLevelPayload(levelDraft);
+      const scrollTop = levelListRef.current?.scrollTop ?? 0;
       if (editingLevelId) {
         await updateCustomerLevelSvc(editingLevelId, payload);
         onNotify?.('Nivel actualizado', 'success');
@@ -180,6 +249,9 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
         onNotify?.('Nivel creado', 'success');
       }
       await loadLevels();
+      setTimeout(() => {
+        if (levelListRef.current) levelListRef.current.scrollTop = scrollTop;
+      }, 0);
       resetLevelForm();
     } catch (err: any) {
       const code = err?.code || err?.message;
@@ -213,16 +285,21 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
       active: level.active !== false,
     });
     setLevelErrors({});
+    focusLevelName();
   };
 
   const handleDeleteLevel = async (level: CustomerLevel) => {
     const approved = onConfirm ? await onConfirm(`¿Eliminar nivel "${level.name}"?`) : true;
     if (!approved) return;
     try {
+      const scrollTop = levelListRef.current?.scrollTop ?? 0;
       await deleteCustomerLevelSvc(level.id);
       onNotify?.('Nivel eliminado', 'success');
       if (editingLevelId === level.id) resetLevelForm();
       await loadLevels();
+      setTimeout(() => {
+        if (levelListRef.current) levelListRef.current.scrollTop = scrollTop;
+      }, 0);
     } catch (err) {
       console.error('Error eliminando nivel', err);
       onNotify?.('No se pudo eliminar el nivel', 'error');
@@ -234,9 +311,13 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
     if (!approved) return;
     setRecalculatingLevels(true);
     try {
+      const scrollTop = levelListRef.current?.scrollTop ?? 0;
       const res = await recalculateCustomerLevelsSvc();
       onNotify?.(`Niveles recalculados (${res.updated}/${res.examined})`, 'success');
       await loadLevels();
+      setTimeout(() => {
+        if (levelListRef.current) levelListRef.current.scrollTop = scrollTop;
+      }, 0);
     } catch (err) {
       console.error('Error recalculando niveles', err);
       onNotify?.('No se pudo recalcular los niveles', 'error');
@@ -246,6 +327,9 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (tab === 'niveles') focusLevelName();
+  }, [tab, editingLevelId]);
 
   const onSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -469,8 +553,18 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
                 ) : customerLevels.length === 0 ? (
                   <div style={{ color: '#666' }}>Aún no hay niveles configurados.</div>
                 ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <div
+                    ref={levelListRef}
+                    style={{
+                      overflowX: 'auto',
+                      overflowY: 'auto',
+                      maxHeight: 360,
+                      border: '1px solid #f0f0f0',
+                      borderRadius: 8,
+                    }}
+                    aria-live="polite"
+                  >
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
                       <thead>
                         <tr>
                           <th style={{ textAlign: 'left', padding: 8 }}>Nombre</th>
@@ -506,8 +600,17 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                   <div>
                     <label>Nombre</label>
-                    <input value={levelDraft.name} onChange={(e) => setLevelDraft({ ...levelDraft, name: e.target.value })} />
-                    {levelErrors.name && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.name}</div>}
+                    <input
+                      ref={levelNameInputRef}
+                      value={levelDraft.name}
+                      onChange={(e) => setLevelDraft({ ...levelDraft, name: e.target.value })}
+                      aria-label="Nombre del nivel"
+                      aria-invalid={levelErrors.name ? true : false}
+                      aria-describedby={levelErrors.name ? 'level-name-error' : undefined}
+                    />
+                    {levelErrors.name && (
+                      <div id="level-name-error" style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.name}</div>
+                    )}
                   </div>
                   <div>
                     <label>Descuento (%)</label>
@@ -516,13 +619,39 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
                       min={0}
                       max={100}
                       value={levelDraft.discountPercent}
-                      onChange={(e) => setLevelDraft({ ...levelDraft, discountPercent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                      onChange={(e) =>
+                        setLevelDraft({
+                          ...levelDraft,
+                          discountPercent: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
+                        })
+                      }
+                      aria-label="Porcentaje de descuento"
+                      aria-invalid={levelErrors.discountPercent ? true : false}
+                      aria-describedby={levelErrors.discountPercent ? 'level-discount-error' : undefined}
                     />
-                    {levelErrors.discountPercent && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.discountPercent}</div>}
+                    {levelErrors.discountPercent && (
+                      <div id="level-discount-error" style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.discountPercent}</div>
+                    )}
                   </div>
                   <div>
-                    <label>Lógica</label>
-                    <select value={levelDraft.logicOp} onChange={(e) => setLevelDraft({ ...levelDraft, logicOp: e.target.value === 'OR' ? 'OR' : 'AND' })}>
+                    <label style={{ display: 'flex', alignItems: 'center' }}>
+                      Lógica
+                      <TooltipHint
+                        id="level-logic-tooltip"
+                        label="Ayuda sobre lógica del criterio"
+                        description={
+                          'Define cómo se evalúan las condiciones del nivel.\nAND: debe cumplir monto y compras configurados.\nOR: basta con cumplir una de las condiciones.'
+                        }
+                      />
+                    </label>
+                    <select
+                      value={levelDraft.logicOp}
+                      onChange={(e) =>
+                        setLevelDraft({ ...levelDraft, logicOp: e.target.value === 'OR' ? 'OR' : 'AND' })
+                      }
+                      aria-label="Lógica del criterio"
+                      aria-describedby={levelErrors.criteria ? 'level-criteria-error' : undefined}
+                    >
                       <option value="AND">AND (cumplir todos)</option>
                       <option value="OR">OR (cumplir alguno)</option>
                     </select>
@@ -533,11 +662,13 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
                       type="number"
                       min={0}
                       value={levelDraft.minAmount ?? ''}
-                      placeholder="Sin monto"
+                      placeholder="Ej.: 30000"
                       onChange={(e) => {
                         const value = e.target.value;
                         setLevelDraft({ ...levelDraft, minAmount: value === '' ? null : Math.max(0, Number(value) || 0) });
                       }}
+                      aria-label="Monto mínimo"
+                      aria-describedby={levelErrors.criteria ? 'level-criteria-error' : undefined}
                     />
                   </div>
                   <div>
@@ -546,33 +677,63 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
                       type="number"
                       min={0}
                       value={levelDraft.minOrders ?? ''}
-                      placeholder="Sin mínimo"
+                      placeholder="Ej.: 3"
                       onChange={(e) => {
                         const value = e.target.value;
                         setLevelDraft({ ...levelDraft, minOrders: value === '' ? null : Math.max(0, Math.floor(Number(value) || 0)) });
                       }}
+                      aria-label="Compras mínimas"
+                      aria-describedby={levelErrors.criteria ? 'level-criteria-error' : undefined}
                     />
                   </div>
                   <div>
-                    <label>Ventana (días)</label>
+                    <label style={{ display: 'flex', alignItems: 'center' }}>
+                      Ventana (días)
+                      <TooltipHint
+                        id="level-window-tooltip"
+                        label="Ayuda sobre ventana en días"
+                        description={
+                          'Periodo hacia atrás para evaluar al cliente.\nEjemplo: 90 = últimos 90 días.\nVacío = histórico completo.'
+                        }
+                      />
+                    </label>
                     <input
                       type="number"
                       min={1}
                       value={levelDraft.withinDays ?? ''}
-                      placeholder="Histórico completo"
+                      placeholder="Ej.: 90 (vacío = histórico)"
                       onChange={(e) => {
                         const value = e.target.value;
                         setLevelDraft({ ...levelDraft, withinDays: value === '' ? null : Math.max(1, Math.floor(Number(value) || 0)) });
                       }}
+                      aria-label="Ventana en días"
+                      aria-invalid={levelErrors.withinDays ? true : false}
+                      aria-describedby={
+                        levelErrors.withinDays ? 'level-window-error' : 'level-window-tooltip'
+                      }
                     />
-                    {levelErrors.withinDays && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.withinDays}</div>}
+                    {levelErrors.withinDays && (
+                      <div id="level-window-error" style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.withinDays}</div>
+                    )}
                   </div>
                   <div>
-                    <label>Prioridad</label>
+                    <label style={{ display: 'flex', alignItems: 'center' }}>
+                      Prioridad
+                      <TooltipHint
+                        id="level-priority-tooltip"
+                        label="Ayuda sobre prioridad"
+                        description={
+                          'Se utiliza cuando el cliente cumple varios niveles.\nGana el nivel con mayor prioridad.\nSi empatan, gana el de mayor descuento.'
+                        }
+                      />
+                    </label>
                     <input
                       type="number"
                       value={levelDraft.priority}
                       onChange={(e) => setLevelDraft({ ...levelDraft, priority: Math.floor(Number(e.target.value) || 0) })}
+                      placeholder="Ej.: 10 (mayor gana)"
+                      aria-label="Prioridad del nivel"
+                      aria-describedby="level-priority-tooltip"
                     />
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -585,7 +746,9 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
                     <label htmlFor="nivel-activo">Activo</label>
                   </div>
                 </div>
-                {levelErrors.criteria && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.criteria}</div>}
+                {levelErrors.criteria && (
+                  <div id="level-criteria-error" style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.criteria}</div>
+                )}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button type="submit" disabled={levelSaving}>{levelSaving ? 'Guardando…' : editingLevelId ? 'Guardar nivel' : 'Crear nivel'}</button>
                   {editingLevelId && (
