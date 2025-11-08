@@ -1,6 +1,44 @@
 // Domain service for Ventas business rules
 // This module is UI-agnostic and contains pure functions plus thin IPC calls
-import { getDiscountLevels as getDiscountLevelsCfg } from '../configuracion/configuracionService';
+import * as cfg from '../configuracion/configuracionService';
+
+// Alias tolerante a cambios de nombre en el servicio de configuración
+type DiscountLevelsResponse = Record<string, number> | Array<Record<string, any>> | null | undefined;
+
+const resolveDiscountLevelsFn = (): (() => Promise<Record<string, number>>) => {
+  const service = cfg as Record<string, any>;
+  const candidateKeys = ['getDiscountLevels', 'listCustomerLevels', 'getCustomerLevels'];
+  for (const key of candidateKeys) {
+    if (typeof service[key] === 'function') {
+      const fn = service[key].bind(service);
+      return async () => {
+        try {
+          const raw: DiscountLevelsResponse = await fn();
+          if (Array.isArray(raw)) {
+            const map: Record<string, number> = {};
+            for (const entry of raw) {
+              if (!entry) continue;
+              const name = (entry.name ?? entry.level ?? '').toString().trim();
+              if (!name) continue;
+              const percent = Number(
+                entry.discount_percent ?? entry.discountPercent ?? entry.discount ?? entry.percent ?? 0
+              );
+              map[name] = Number.isFinite(percent) ? percent : 0;
+            }
+            return map;
+          }
+          if (raw && typeof raw === 'object') {
+            return { ...(raw as Record<string, number>) };
+          }
+        } catch {}
+        return {};
+      };
+    }
+  }
+  return async () => ({} as Record<string, number>);
+};
+
+const getDiscountLevelsCfg = () => resolveDiscountLevelsFn()();
 
 export type PaymentMethod = 'Efectivo' | 'Tarjeta' | 'Transferencia';
 

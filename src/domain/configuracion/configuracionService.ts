@@ -125,6 +125,132 @@ export async function getCustomerLevels(): Promise<CustomerLevel[]> {
   return (await api.getCustomerLevels()) as CustomerLevel[];
 }
 
+const DEFAULT_DISCOUNT_LEVELS = { Bronze: 0, Silver: 5, Gold: 10, Platinum: 15 } as const;
+
+const sanitizeDiscountLevels = (raw: any): Record<string, number> => {
+  const output: Record<string, number> = { ...DEFAULT_DISCOUNT_LEVELS };
+  if (raw && typeof raw === 'object') {
+    const source = Array.isArray(raw)
+      ? raw.reduce((acc, item) => {
+          if (!item) return acc;
+          const name = (item.name ?? item.level ?? '').toString().trim();
+          if (!name) return acc;
+          const percent = Number(
+            item.discount_percent ?? item.discountPercent ?? item.discount ?? item.percent ?? 0
+          );
+          acc[name] = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+          return acc;
+        }, {} as Record<string, number>)
+      : raw;
+    for (const [key, value] of Object.entries(source as Record<string, number>)) {
+      output[key] = Math.max(0, Math.min(100, Number(value) || 0));
+    }
+  }
+  return output;
+};
+
+export async function getDiscountLevels(): Promise<Record<string, number>> {
+  const api = (window as any).electronAPI;
+  if (api?.getDiscountLevels) {
+    try {
+      const remote = await api.getDiscountLevels();
+      if (remote) return sanitizeDiscountLevels(remote);
+    } catch {}
+  }
+  if (api?.getSettings) {
+    try {
+      const rows: Setting[] = await api.getSettings();
+      const map = new Map(rows.map((r) => [r.key, r.value] as const));
+      const stored = map.get('discount_levels');
+      if (stored) {
+        try { return sanitizeDiscountLevels(JSON.parse(stored)); } catch {}
+      }
+    } catch {}
+  }
+  try {
+    const local = localStorage.getItem('discount_levels');
+    if (local) return sanitizeDiscountLevels(JSON.parse(local));
+  } catch {}
+  return { ...DEFAULT_DISCOUNT_LEVELS };
+}
+
+export async function setDiscountLevels(levels: Record<string, number>): Promise<void> {
+  const clean = sanitizeDiscountLevels(levels);
+  const api = (window as any).electronAPI;
+  if (api?.setDiscountLevels) {
+    await api.setDiscountLevels(clean);
+    return;
+  }
+  if (api?.updateSetting) {
+    await api.updateSetting('discount_levels', JSON.stringify(clean));
+    return;
+  }
+  try { localStorage.setItem('discount_levels', JSON.stringify(clean)); } catch {}
+}
+
+export type CustomerLevelRules = {
+  criteria: 'amount' | 'purchases';
+  thresholds: { Bronze: number; Silver: number; Gold: number; Platinum: number };
+  periodMonths?: number | null;
+};
+
+const DEFAULT_LEVEL_RULES: CustomerLevelRules = {
+  criteria: 'amount',
+  thresholds: { Bronze: 0, Silver: 15000, Gold: 50000, Platinum: 100000 },
+  periodMonths: null,
+};
+
+const sanitizeCustomerLevelRules = (
+  draft: Partial<CustomerLevelRules> | null | undefined
+): CustomerLevelRules => {
+  const base = draft || {};
+  const thresholds = base.thresholds || {};
+  const sanitizeNumber = (value: unknown, min = 0) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? Math.max(min, num) : min;
+  };
+  const resolvedPeriod =
+    base.periodMonths === null || base.periodMonths === undefined
+      ? null
+      : Math.max(1, Math.floor(Number(base.periodMonths) || 0));
+  const result: CustomerLevelRules = {
+    criteria: base.criteria === 'purchases' ? 'purchases' : 'amount',
+    thresholds: {
+      Bronze: sanitizeNumber((thresholds as any).Bronze ?? 0),
+      Silver: sanitizeNumber((thresholds as any).Silver ?? 15000),
+      Gold: sanitizeNumber((thresholds as any).Gold ?? 50000),
+      Platinum: sanitizeNumber((thresholds as any).Platinum ?? 100000),
+    },
+    periodMonths: resolvedPeriod,
+  };
+  return result;
+};
+
+export async function getCustomerLevelRules(): Promise<CustomerLevelRules> {
+  const api = (window as any).electronAPI;
+  if (api?.getCustomerLevelRules) {
+    try {
+      const remote = await api.getCustomerLevelRules();
+      if (remote) return sanitizeCustomerLevelRules(remote);
+    } catch {}
+  }
+  try {
+    const stored = localStorage.getItem('customerLevelRules');
+    if (stored) return sanitizeCustomerLevelRules(JSON.parse(stored));
+  } catch {}
+  return { ...DEFAULT_LEVEL_RULES };
+}
+
+export async function setCustomerLevelRules(rules: CustomerLevelRules): Promise<void> {
+  const clean = sanitizeCustomerLevelRules(rules);
+  const api = (window as any).electronAPI;
+  if (api?.setCustomerLevelRules) {
+    await api.setCustomerLevelRules(clean);
+    return;
+  }
+  try { localStorage.setItem('customerLevelRules', JSON.stringify(clean)); } catch {}
+}
+
 export async function createCustomerLevel(draft: CustomerLevelDraft): Promise<CustomerLevel> {
   const api = (window as any).electronAPI;
   if (!api?.createCustomerLevel) throw new Error('API_NOT_AVAILABLE');
