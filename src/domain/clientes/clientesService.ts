@@ -1,5 +1,4 @@
-import { Customer, Sale, Product } from '../../shared/types';
-import { getCustomerLevelRules } from '../configuracion/configuracionService';
+import { Customer, Sale, Product, CustomerLevel } from '../../shared/types';
 
 // Tipos
 
@@ -14,8 +13,6 @@ export type CustomerStatsEntry = {
 // CRUD y validaciones para módulo Clientes
 export type CustomerCreateInput = Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>;
 export type CustomerUpdateInput = Partial<Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>>;
-
-const ALLOWED_DISCOUNT: Customer['discountLevel'][] = ['Bronze', 'Silver', 'Gold', 'Platinum'];
 
 export async function loadCustomers(): Promise<Customer[]> {
   if (!(window as any).electronAPI?.getCustomers) return [];
@@ -59,8 +56,12 @@ export function validateCustomer(input: Partial<Customer>): { ok: boolean; error
   const phone = (input.phone || '').trim();
   if (phone && phone.replace(/\D+/g, '').length < 7) errors.phone = 'Teléfono inválido';
 
-  const discount = input.discountLevel as Customer['discountLevel'];
-  if (discount && !ALLOWED_DISCOUNT.includes(discount)) errors.discountLevel = 'Nivel de descuento inválido';
+  if (input.levelId !== undefined && input.levelId !== null) {
+    const levelIdNum = Number(input.levelId);
+    if (!Number.isInteger(levelIdNum) || levelIdNum < 0) {
+      errors.levelId = 'Nivel inválido';
+    }
+  }
 
   return { ok: Object.keys(errors).length === 0, errors };
 }
@@ -82,7 +83,8 @@ export async function createCustomer(input: CustomerCreateInput): Promise<Custom
     phone: input.phone?.trim() || undefined,
     alternatePhone: input.alternatePhone?.trim() || undefined,
     address: input.address?.trim() || undefined,
-    discountLevel: input.discountLevel || 'Bronze',
+    discountLevel: input.discountLevel?.trim() || undefined,
+    levelId: input.levelId ?? null,
     birthDate: input.birthDate,
     gender: input.gender,
     occupation: input.occupation,
@@ -208,42 +210,27 @@ export function getStatsForCustomer(
   return { customer: cust, purchases, total, avg, lastPurchase, topCategories, recent };
 }
 
-// Decidir nivel de cliente a partir del total gastado (reglas actuales)
-// Compat: mantiene lógica antigua para mapear tipos heredados
-export function decideCustomerLevelFromTotal(total: number, current: string = 'Particular'): string {
-  let level = current || 'Particular';
-  if (total > 50000) level = 'VIP';
-  else if (total > 15000) level = 'Mayorista';
-  else level = 'Particular';
-  return level;
+export async function loadCustomerLevels(): Promise<CustomerLevel[]> {
+  if (!(window as any).electronAPI?.getCustomerLevels) return [];
+  return (await (window as any).electronAPI.getCustomerLevels()) as CustomerLevel[];
 }
 
-// Nueva: determina nivel de descuento (Bronze/Silver/Gold/Platinum) segun reglas configurables
-export async function decideCustomerLevelForCustomer(customer: Customer, allSales: Sale[]): Promise<Customer['discountLevel']> {
-  const rules = await getCustomerLevelRules();
-  if (rules.criteria === 'amount') {
-    const total = allSales.filter(s => s.customerId === customer.id).reduce((sum, s) => sum + (s.total || 0), 0);
-    return pickLevelByThreshold(total, rules.thresholds);
-  } else {
-    // purchases
-    const months = Math.max(1, rules.periodMonths ?? 6);
-    const end = new Date();
-    const start = new Date();
-    start.setMonth(start.getMonth() - months);
-    const count = allSales.filter(s => s.customerId === customer.id).filter(s => {
-      const d = new Date(s.createdAt);
-      return d >= start && d <= end;
-    }).length;
-    return pickLevelByThreshold(count, rules.thresholds);
-  }
+export async function recomputeCustomerLevel(customerId: number): Promise<Customer | null> {
+  if (!(window as any).electronAPI?.computeCustomerLevel) return null;
+  return (await (window as any).electronAPI.computeCustomerLevel(customerId)) as Customer | null;
 }
 
-function pickLevelByThreshold(value: number, thresholds: Record<string, number>): Customer['discountLevel'] {
-  // Asignación por mayor o igual al umbral
-  if (value >= (thresholds.Platinum ?? 100000)) return 'Platinum';
-  if (value >= (thresholds.Gold ?? 50000)) return 'Gold';
-  if (value >= (thresholds.Silver ?? 15000)) return 'Silver';
-  return 'Bronze';
+// Compatibilidad legado: calculadora simple que conserva el tipo existente
+// Este helper se mantiene para no romper flujos previos del dashboard que
+// reajustaban customerType en base al monto total. Con los niveles dinámicos,
+// delegamos la asignación real a computeCustomerLevel; aquí devolvemos el tipo
+// actual o el valor por defecto para mantener estable la UI histórica.
+export function decideCustomerLevelFromTotal(total: number, currentType?: string): string {
+  if (currentType && currentType.trim()) return currentType;
+  if (!Number.isFinite(total) || total <= 0) return 'Particular';
+  if (total > 50000) return 'VIP';
+  if (total > 20000) return 'Mayorista';
+  return 'Particular';
 }
 
 // Utilidades

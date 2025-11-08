@@ -1,5 +1,4 @@
-import { Setting, Sale, Customer, DEFAULT_ADMIN_PASSWORD } from '../../shared/types';
-import { loadCustomers, updateCustomer, decideCustomerLevelForCustomer } from '../clientes/clientesService';
+import { Setting, Sale, CustomerLevel, DEFAULT_ADMIN_PASSWORD } from '../../shared/types';
 
 export type Configuracion = {
   iva: number; // 0..100 (porcentaje)
@@ -79,43 +78,104 @@ export async function getMonthlyGoal(): Promise<number> {
   return raw ? Number(raw) || 0 : 0;
 }
 
-// Niveles de descuento por nivel (Bronze/Silver/Gold/Platinum)
-export type DiscountLevels = { Bronze: number; Silver: number; Gold: number; Platinum: number };
+// Catálogo de niveles de clientes (configurable)
+export type CustomerLevelDraft = {
+  name: string;
+  discountPercent: number;
+  logicOp: 'AND' | 'OR';
+  minAmount?: number | null;
+  minOrders?: number | null;
+  withinDays?: number | null;
+  priority: number;
+  active: boolean;
+};
 
-export async function getDiscountLevels(): Promise<DiscountLevels> {
-  // Persistimos en settings como 'discountLevels' para UI y guardamos también en 'discount_levels' para compatibilidad
-  const rows: Setting[] = (await (window as any).electronAPI?.getSettings?.()) || [];
-  const map = new Map(rows.map(r => [r.key, r.value] as const));
-  const raw = map.get('discountLevels') || map.get('discount_levels');
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      return {
-        Bronze: Number(parsed.Bronze ?? 0),
-        Silver: Number(parsed.Silver ?? 5),
-        Gold: Number(parsed.Gold ?? 8),
-        Platinum: Number(parsed.Platinum ?? 12),
-      };
-    } catch {}
-  }
-  return { Bronze: 0, Silver: 5, Gold: 10, Platinum: 15 };
-}
-
-export async function setDiscountLevels(levels: DiscountLevels): Promise<void> {
-  const api = (window as any).electronAPI;
-  if (!api?.updateSetting) return;
-  const clean: DiscountLevels = {
-    Bronze: clamp0to100(levels.Bronze),
-    Silver: clamp0to100(levels.Silver),
-    Gold: clamp0to100(levels.Gold),
-    Platinum: clamp0to100(levels.Platinum),
+function sanitizeLevelDraft(
+  draft: Partial<CustomerLevelDraft> & { name?: string },
+  fallbackName?: string
+): CustomerLevelDraft {
+  const resolvedNameSource =
+    draft.name !== undefined && draft.name !== null ? draft.name : fallbackName || '';
+  const name = resolvedNameSource.toString().trim();
+  const logicOp: 'AND' | 'OR' = draft.logicOp === 'OR' ? 'OR' : 'AND';
+  const withinDays = draft.withinDays === null || draft.withinDays === undefined
+    ? null
+    : Math.max(1, Math.floor(Number(draft.withinDays) || 0));
+  const minAmount = draft.minAmount === null || draft.minAmount === undefined
+    ? null
+    : Math.max(0, Number(draft.minAmount) || 0);
+  const minOrders = draft.minOrders === null || draft.minOrders === undefined
+    ? null
+    : Math.max(0, Math.floor(Number(draft.minOrders) || 0));
+  return {
+    name: name || fallbackName || 'Nivel sin nombre',
+    discountPercent: Math.max(0, Math.min(100, Number(draft.discountPercent ?? 0))),
+    logicOp,
+    minAmount,
+    minOrders,
+    withinDays,
+    priority: Math.floor(Number(draft.priority ?? 0)),
+    active: draft.active === false ? false : true,
   };
-  await api.updateSetting('discountLevels', JSON.stringify(clean));
-  await api.updateSetting('discount_levels', JSON.stringify(clean));
-  try { localStorage.setItem('discountLevels', JSON.stringify(clean)); } catch {}
 }
 
-function clamp0to100(n: number) { return Math.max(0, Math.min(100, Number(n) || 0)); }
+export async function getCustomerLevels(): Promise<CustomerLevel[]> {
+  const api = (window as any).electronAPI;
+  if (!api?.getCustomerLevels) return [];
+  return (await api.getCustomerLevels()) as CustomerLevel[];
+}
+
+export async function createCustomerLevel(draft: CustomerLevelDraft): Promise<CustomerLevel> {
+  const api = (window as any).electronAPI;
+  if (!api?.createCustomerLevel) throw new Error('API_NOT_AVAILABLE');
+  const payload = sanitizeLevelDraft(draft);
+  return (await api.createCustomerLevel(payload)) as CustomerLevel;
+}
+
+export async function updateCustomerLevel(id: number, draft: Partial<CustomerLevelDraft>): Promise<CustomerLevel | null> {
+  const api = (window as any).electronAPI;
+  if (!api?.updateCustomerLevel) throw new Error('API_NOT_AVAILABLE');
+  let fallbackName: string | undefined;
+  if (draft.name === undefined) {
+    try {
+      const currentLevels = await getCustomerLevels();
+      fallbackName = currentLevels?.find((level) => level.id === id)?.name;
+    } catch {
+      fallbackName = undefined;
+    }
+  }
+  const payload = sanitizeLevelDraft({ ...draft }, fallbackName);
+  return (await api.updateCustomerLevel(id, payload)) as CustomerLevel | null;
+}
+
+export async function deleteCustomerLevel(id: number): Promise<boolean> {
+  const api = (window as any).electronAPI;
+  if (!api?.deleteCustomerLevel) return false;
+  return await api.deleteCustomerLevel(id);
+}
+
+export async function recalculateCustomerLevels(): Promise<{ updated: number; examined: number }> {
+  const api = (window as any).electronAPI;
+  if (!api?.recalculateCustomerLevels) return { updated: 0, examined: 0 };
+  return (await api.recalculateCustomerLevels()) as { updated: number; examined: number };
+}
+
+export function formatLevelCriteria(level: CustomerLevel): string {
+  const parts: string[] = [];
+  if (level.minAmount !== null && level.minAmount !== undefined) {
+    parts.push(`$≥${Number(level.minAmount).toLocaleString('es-MX')}`);
+  }
+  if (level.minOrders !== null && level.minOrders !== undefined) {
+    parts.push(`compras≥${level.minOrders}`);
+  }
+  if (level.withinDays) {
+    parts.push(`${level.withinDays} días`);
+  } else {
+    parts.push('histórico');
+  }
+  const criteria = parts.length ? parts.join(', ') : 'sin criterios';
+  return `${level.logicOp}, ${criteria}`;
+}
 
 export async function getDashboardPassword(): Promise<string> {
   try {
@@ -163,21 +223,7 @@ export async function deleteSale(id: number): Promise<boolean> {
 
 // Actualizar niveles de clientes según total gastado histórico
 export async function updateCustomerLevels(): Promise<{ updated: number; examined: number }>{
-  const [customers, sales] = await Promise.all([
-    loadCustomers(),
-    (window as any).electronAPI?.getSales?.() || Promise.resolve([])
-  ]);
-  let updated = 0;
-  await Promise.all(customers.map(async (c: Customer) => {
-    try {
-      const mapped = await decideCustomerLevelForCustomer(c, sales as Sale[]);
-      if (c.discountLevel !== mapped) {
-        await updateCustomer(c.id, { discountLevel: mapped });
-        updated += 1;
-      }
-    } catch {}
-  }));
-  return { updated, examined: customers.length };
+  return recalculateCustomerLevels();
 }
 
 // mapCustomerTypeToDiscount: obsoleto tras reglas configurables
@@ -238,56 +284,3 @@ export async function deleteAllCustomers(): Promise<boolean> {
   return await api.deleteAllCustomers();
 }
 
-// ===== Reglas de nivelación de clientes =====
-export type CustomerLevelRules = {
-  criteria: 'amount' | 'purchases';
-  thresholds: { Bronze: number; Silver: number; Gold: number; Platinum: number };
-  periodMonths?: number; // aplica solo para purchases
-};
-
-const DEFAULT_RULES: CustomerLevelRules = {
-  criteria: 'amount',
-  thresholds: { Bronze: 0, Silver: 15000, Gold: 50000, Platinum: 100000 },
-};
-
-export async function getCustomerLevelRules(): Promise<CustomerLevelRules> {
-  try {
-    const rows: Setting[] = (await (window as any).electronAPI?.getSettings?.()) || [];
-    const map = new Map(rows.map(r => [r.key, r.value] as const));
-    const raw = map.get('customerLevelRules');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      // Validación mínima
-      if (parsed && (parsed.criteria === 'amount' || parsed.criteria === 'purchases') && parsed.thresholds) {
-        const th = parsed.thresholds;
-        return {
-          criteria: parsed.criteria,
-          thresholds: {
-            Bronze: Number(th.Bronze ?? 0),
-            Silver: Number(th.Silver ?? 15000),
-            Gold: Number(th.Gold ?? 50000),
-            Platinum: Number(th.Platinum ?? 100000),
-          },
-          periodMonths: parsed.criteria === 'purchases' ? Math.max(1, Number(parsed.periodMonths ?? 6)) : undefined,
-        };
-      }
-    }
-  } catch {}
-  return DEFAULT_RULES;
-}
-
-export async function setCustomerLevelRules(rules: CustomerLevelRules): Promise<void> {
-  const api = (window as any).electronAPI;
-  if (!api?.updateSetting) return;
-  const clean: CustomerLevelRules = {
-    criteria: rules.criteria === 'purchases' ? 'purchases' : 'amount',
-    thresholds: {
-      Bronze: Math.max(0, Number(rules.thresholds?.Bronze ?? 0)),
-      Silver: Math.max(0, Number(rules.thresholds?.Silver ?? 15000)),
-      Gold: Math.max(0, Number(rules.thresholds?.Gold ?? 50000)),
-      Platinum: Math.max(0, Number(rules.thresholds?.Platinum ?? 100000)),
-    },
-    periodMonths: rules.criteria === 'purchases' ? Math.max(1, Number(rules.periodMonths ?? 6)) : undefined,
-  };
-  await api.updateSetting('customerLevelRules', JSON.stringify(clean));
-}
