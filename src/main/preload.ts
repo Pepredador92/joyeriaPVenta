@@ -34,6 +34,12 @@ const electronAPI = {
   // Configuración
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SETTINGS),
   updateSetting: (key: string, value: string) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTING, key, value),
+  getCustomerLevels: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CUSTOMER_LEVELS),
+  createCustomerLevel: (levelData: any) => ipcRenderer.invoke(IPC_CHANNELS.CREATE_CUSTOMER_LEVEL, levelData),
+  updateCustomerLevel: (id: number, levelData: any) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CUSTOMER_LEVEL, id, levelData),
+  deleteCustomerLevel: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_CUSTOMER_LEVEL, id),
+  computeCustomerLevel: (id: number) => ipcRenderer.invoke(IPC_CHANNELS.COMPUTE_CUSTOMER_LEVEL, id),
+  recalculateCustomerLevels: () => ipcRenderer.invoke(IPC_CHANNELS.RECOMPUTE_CUSTOMER_LEVELS),
   deleteAllSales: () => ipcRenderer.invoke(IPC_CHANNELS.DELETE_ALL_SALES),
   deleteAllCustomers: () => ipcRenderer.invoke(IPC_CHANNELS.DELETE_ALL_CUSTOMERS),
 

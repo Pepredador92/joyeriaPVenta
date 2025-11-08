@@ -28,6 +28,20 @@ export interface CategoryOption {
   name: string;
 }
 
+export interface CustomerLevel {
+  id: number;
+  name: string;
+  discountPercent: number;
+  logicOp: 'AND' | 'OR';
+  minAmount: number | null;
+  minOrders: number | null;
+  withinDays: number | null;
+  priority: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Customer {
   id: number;
   name: string;
@@ -35,28 +49,33 @@ export interface Customer {
   phone?: string;
   alternatePhone?: string;
   address?: string;
-  discountLevel: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
-  
+
   // Información demográfica
   birthDate?: string;
   gender?: string;
   occupation?: string;
-  
+
   // Información comercial
   customerType?: 'Particular' | 'Empresa' | 'Mayorista';
   referredBy?: string;
   preferredContact?: 'Email' | 'Teléfono' | 'SMS' | 'WhatsApp';
-  
+
   // Preferencias de compra
   preferredCategories?: string[];
   budgetRange?: string;
   specialOccasions?: string[];
-  
+
   // Información adicional
   notes?: string;
   tags?: string[];
   isActive?: boolean;
-  
+
+  levelId?: number | null;
+  levelName?: string | null;
+  levelDiscountPercent?: number | null;
+  // Compatibilidad con datos antiguos
+  discountLevel?: string | null;
+
   createdAt: string;
   updatedAt: string;
 }
@@ -99,7 +118,7 @@ export interface Sale {
   updatedAt: string;
   items: SaleItem[];
   // Auditoría de descuento aplicado en el momento de la venta
-  appliedDiscountLevel?: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+  appliedDiscountLevel?: string | null;
   appliedDiscountPercent?: number; // porcentaje (ej. 5 para 5%)
   notes?: string;
   inventoryMovements?: InventoryMovement[];
@@ -175,6 +194,12 @@ export const IPC_CHANNELS = {
   GET_SETTINGS: 'get-settings',
   UPDATE_SETTING: 'update-setting',
   DELETE_SETTING: 'delete-setting',
+  GET_CUSTOMER_LEVELS: 'get-customer-levels',
+  CREATE_CUSTOMER_LEVEL: 'create-customer-level',
+  UPDATE_CUSTOMER_LEVEL: 'update-customer-level',
+  DELETE_CUSTOMER_LEVEL: 'delete-customer-level',
+  COMPUTE_CUSTOMER_LEVEL: 'compute-customer-level',
+  RECOMPUTE_CUSTOMER_LEVELS: 'recompute-customer-levels',
 
   // Administración avanzada
   DELETE_ALL_SALES: 'delete-all-sales',

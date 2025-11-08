@@ -19,7 +19,7 @@ export const ClientesPage: React.FC<ClientesPageProps> = ({ onNotify, onConfirm 
   const [customers, setCustomers] = useState<any[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState<any>({ name: '', email: '', phone: '', discountLevel: 'Bronze', customerType: 'Particular' });
+  const [form, setForm] = useState<any>({ name: '', email: '', phone: '', customerType: 'Particular', address: '', levelName: '' });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -43,14 +43,16 @@ export const ClientesPage: React.FC<ClientesPageProps> = ({ onNotify, onConfirm 
     setErrors(v.errors);
     if (!v.ok) return;
     try {
+      const payload = { ...form };
+      delete payload.levelName;
       if (editingId) {
-        await updateCustomerSvc(editingId, form);
+        await updateCustomerSvc(editingId, payload);
         onNotify?.('Cliente actualizado', 'success');
       } else {
-        await createCustomerSvc(form);
+        await createCustomerSvc(payload);
         onNotify?.('Cliente creado', 'success');
       }
-      setForm({ name: '', email: '', phone: '', discountLevel: 'Bronze', customerType: 'Particular' });
+      setForm({ name: '', email: '', phone: '', customerType: 'Particular', address: '', levelName: '' });
       setEditingId(null);
       await reload();
     } catch (err: any) {
@@ -65,9 +67,9 @@ export const ClientesPage: React.FC<ClientesPageProps> = ({ onNotify, onConfirm 
       name: c.name || '',
       email: c.email || '',
       phone: c.phone || '',
-      discountLevel: c.discountLevel || 'Bronze',
       customerType: c.customerType || 'Particular',
       address: c.address || '',
+      levelName: c.levelName || c.discountLevel || '',
     });
   };
 
@@ -104,14 +106,8 @@ export const ClientesPage: React.FC<ClientesPageProps> = ({ onNotify, onConfirm 
             {errors.phone && <div style={{ color:'#d32f2f', fontSize:12 }}>{errors.phone}</div>}
           </div>
           <div>
-            <label>Nivel</label>
-            <select value={form.discountLevel} onChange={e=> setForm({ ...form, discountLevel: e.target.value })}>
-              <option>Bronze</option>
-              <option>Silver</option>
-              <option>Gold</option>
-              <option>Platinum</option>
-            </select>
-            {errors.discountLevel && <div style={{ color:'#d32f2f', fontSize:12 }}>{errors.discountLevel}</div>}
+            <label>Nivel (automático)</label>
+            <input value={form.levelName || (editingId ? 'Sin nivel' : 'Se asignará automáticamente')} disabled />
           </div>
           <div>
             <label>Tipo</label>
@@ -128,7 +124,7 @@ export const ClientesPage: React.FC<ClientesPageProps> = ({ onNotify, onConfirm 
         </div>
         <div style={{ marginTop:10, display:'flex', gap:8 }}>
           <button type="submit">{editingId ? 'Guardar cambios' : 'Agregar cliente'}</button>
-          {editingId && <button type="button" onClick={()=> { setEditingId(null); setForm({ name: '', email: '', phone: '', discountLevel: 'Bronze', customerType: 'Particular' }); setErrors({}); }}>Cancelar</button>}
+          {editingId && <button type="button" onClick={()=> { setEditingId(null); setForm({ name: '', email: '', phone: '', customerType: 'Particular', address: '', levelName: '' }); setErrors({}); }}>Cancelar</button>}
         </div>
       </form>
 
@@ -150,7 +146,7 @@ export const ClientesPage: React.FC<ClientesPageProps> = ({ onNotify, onConfirm 
                 <td style={{ padding:8 }}>{c.name}</td>
                 <td style={{ padding:8 }}>{c.email}</td>
                 <td style={{ padding:8 }}>{c.phone}</td>
-                <td style={{ padding:8 }}>{c.discountLevel}</td>
+                <td style={{ padding:8 }}>{c.levelName || c.discountLevel || 'Sin nivel'}</td>
                 <td style={{ padding:8 }}>{c.customerType||'Particular'}</td>
                 <td style={{ padding:8, textAlign:'center' }}>
                   <button onClick={()=> onEdit(c)} style={{ marginRight:8 }}>Editar</button>

@@ -1,36 +1,31 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  // Generales
   loadSettings as loadSettingsSvc,
   updateSettings as updateSettingsSvc,
   validateSettings as validateSettingsSvc,
   Configuracion,
-  // Dashboard
   getMonthlyGoal as getMonthlyGoalSvc,
   setMonthlyGoal as setMonthlyGoalSvc,
-  // Descuentos por nivel
-  getDiscountLevels as getDiscountLevelsSvc,
-  setDiscountLevels as setDiscountLevelsSvc,
-  // Ventas del día
   getTodaySales as getTodaySalesSvc,
   updateSale as updateSaleSvc,
   deleteSale as deleteSaleSvc,
-  // Ventas históricas
   getSalesByDay as getSalesByDaySvc,
   getSalesByWeek as getSalesByWeekSvc,
   getSalesByMonth as getSalesByMonthSvc,
   getAllSales as getAllSalesSvc,
-  // Administración avanzada
   deleteAllSales as deleteAllSalesSvc,
   deleteAllCustomers as deleteAllCustomersSvc,
-  // Clientes
-  updateCustomerLevels as updateCustomerLevelsSvc,
-  getCustomerLevelRules as getCustomerLevelRulesSvc,
-  setCustomerLevelRules as setCustomerLevelRulesSvc,
+  getCustomerLevels as getCustomerLevelsSvc,
+  createCustomerLevel as createCustomerLevelSvc,
+  updateCustomerLevel as updateCustomerLevelSvc,
+  deleteCustomerLevel as deleteCustomerLevelSvc,
+  recalculateCustomerLevels as recalculateCustomerLevelsSvc,
+  formatLevelCriteria,
   getDashboardPassword as getDashboardPasswordSvc,
-  setDashboardPassword as setDashboardPasswordSvc
+  setDashboardPassword as setDashboardPasswordSvc,
+  CustomerLevelDraft,
 } from '../../../domain/configuracion/configuracionService';
-import { Sale, DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from '../../../shared/types';
+import { Sale, CustomerLevel, DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from '../../../shared/types';
 
 type ToastTone = 'info' | 'success' | 'error';
 
@@ -41,7 +36,7 @@ type ConfiguracionPageProps = {
 
 export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, onConfirm }) => {
   // Navegación por secciones
-  const [tab, setTab] = useState<'generales' | 'dashboard' | 'clientes' | 'ventas' | 'descuentos' | 'historicas' | 'admin'>('generales');
+  const [tab, setTab] = useState<'generales' | 'dashboard' | 'niveles' | 'ventas' | 'historicas' | 'admin'>('generales');
 
   // Estado: Generales
   const [form, setForm] = useState<Configuracion>({ iva: 16, moneda: 'MXN', nivelesDescuento: { VIP: 12, Mayorista: 8, Particular: 0 }, tema: 'claro' });
@@ -53,9 +48,47 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
   const [monthlyGoal, setMonthlyGoal] = useState<number>(0);
   const [savingGoal, setSavingGoal] = useState(false);
 
-  // Estado: Descuentos por nivel
-  const [disc, setDisc] = useState<{ Bronze: number; Silver: number; Gold: number; Platinum: number }>({ Bronze: 0, Silver: 5, Gold: 8, Platinum: 12 });
-  const [savingDisc, setSavingDisc] = useState(false);
+  // Estado: Niveles de clientes
+  const [customerLevels, setCustomerLevels] = useState<CustomerLevel[]>([]);
+  const [levelsLoading, setLevelsLoading] = useState(false);
+  const [levelSaving, setLevelSaving] = useState(false);
+  const [editingLevelId, setEditingLevelId] = useState<number | null>(null);
+  const [levelErrors, setLevelErrors] = useState<Record<string, string>>({});
+  const [recalculatingLevels, setRecalculatingLevels] = useState(false);
+  const emptyLevelDraft: CustomerLevelDraft = {
+    name: '',
+    discountPercent: 0,
+    logicOp: 'AND',
+    minAmount: null,
+    minOrders: null,
+    withinDays: null,
+    priority: 0,
+    active: true,
+  };
+  const [levelDraft, setLevelDraft] = useState<CustomerLevelDraft>(emptyLevelDraft);
+
+  const sortLevels = (levels: CustomerLevel[]) =>
+    [...levels].sort((a, b) => {
+      if ((b.priority ?? 0) !== (a.priority ?? 0)) return (b.priority ?? 0) - (a.priority ?? 0);
+      if ((b.discountPercent ?? 0) !== (a.discountPercent ?? 0)) return (b.discountPercent ?? 0) - (a.discountPercent ?? 0);
+      return a.name.localeCompare(b.name, 'es');
+    });
+
+  const resetLevelForm = () => {
+    setLevelDraft(emptyLevelDraft);
+    setEditingLevelId(null);
+    setLevelErrors({});
+  };
+
+  const loadLevels = async () => {
+    setLevelsLoading(true);
+    try {
+      const list = await getCustomerLevelsSvc();
+      setCustomerLevels(sortLevels(list));
+    } finally {
+      setLevelsLoading(false);
+    }
+  };
 
   // Estado: Ventas del día
   const [todaySales, setTodaySales] = useState<Sale[]>([]);
@@ -72,12 +105,6 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
   const [historicSales, setHistoricSales] = useState<Sale[]>([]);
   const [loadingHistoric, setLoadingHistoric] = useState(false);
 
-  // Estado: Clientes (acciones masivas)
-  const [updatingLevels, setUpdatingLevels] = useState(false);
-  const [levelsResult, setLevelsResult] = useState<{ updated: number; examined: number } | null>(null);
-  const [rules, setRules] = useState<{ criteria: 'amount' | 'purchases'; thresholds: { Bronze: number; Silver: number; Gold: number; Platinum: number }; periodMonths?: number }>({ criteria: 'amount', thresholds: { Bronze: 0, Silver: 15000, Gold: 50000, Platinum: 100000 } });
-  const [savingRules, setSavingRules] = useState(false);
-
   // Toast general
   const [resolvedAdminPassword, setResolvedAdminPassword] = useState<string>(DEFAULT_ADMIN_PASSWORD);
   const [hasCustomAdminPassword, setHasCustomAdminPassword] = useState(false);
@@ -89,22 +116,132 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
 
   const load = async () => {
     setLoading(true);
+    setLevelsLoading(true);
     try {
-      const [s, goal, dlevels, rl, adminPwd] = await Promise.all([
+      const [s, goal, levels, adminPwd] = await Promise.all([
         loadSettingsSvc(),
         getMonthlyGoalSvc(),
-        getDiscountLevelsSvc(),
-        getCustomerLevelRulesSvc(),
-        getDashboardPasswordSvc()
+        getCustomerLevelsSvc(),
+        getDashboardPasswordSvc(),
       ]);
       setForm(s);
       setMonthlyGoal(goal || 0);
-      setDisc(dlevels);
-      setRules(rl);
+      setCustomerLevels(sortLevels(levels));
       setResolvedAdminPassword(adminPwd);
       setHasCustomAdminPassword((adminPwd || '').trim() !== DEFAULT_ADMIN_PASSWORD);
     } finally {
       setLoading(false);
+      setLevelsLoading(false);
+    }
+  };
+
+  const validateLevelDraftForm = (draft: CustomerLevelDraft) => {
+    const result: Record<string, string> = {};
+    if (!(draft.name || '').trim()) result.name = 'Nombre obligatorio';
+    const percent = Number(draft.discountPercent);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      result.discountPercent = 'Descuento entre 0 y 100';
+    }
+    const hasAmount = draft.minAmount !== null && draft.minAmount !== undefined;
+    const hasOrders = draft.minOrders !== null && draft.minOrders !== undefined;
+    if (!hasAmount && !hasOrders) {
+      result.criteria = 'Define al menos un criterio (monto o compras)';
+    }
+    if (draft.withinDays !== null && draft.withinDays !== undefined && draft.withinDays <= 0) {
+      result.withinDays = 'Debe ser mayor a 0';
+    }
+    return result;
+  };
+
+  const prepareLevelPayload = (draft: CustomerLevelDraft): CustomerLevelDraft => ({
+    name: draft.name.trim(),
+    discountPercent: Math.max(0, Math.min(100, Number(draft.discountPercent) || 0)),
+    logicOp: draft.logicOp === 'OR' ? 'OR' : 'AND',
+    minAmount: draft.minAmount === null || draft.minAmount === undefined ? null : Math.max(0, Number(draft.minAmount) || 0),
+    minOrders: draft.minOrders === null || draft.minOrders === undefined ? null : Math.max(0, Math.floor(Number(draft.minOrders) || 0)),
+    withinDays: draft.withinDays === null || draft.withinDays === undefined ? null : Math.max(1, Math.floor(Number(draft.withinDays) || 0)),
+    priority: Math.floor(Number(draft.priority ?? 0) || 0),
+    active: draft.active !== false,
+  });
+
+  const handleLevelSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const validation = validateLevelDraftForm(levelDraft);
+    setLevelErrors(validation);
+    if (Object.keys(validation).length) return;
+    setLevelSaving(true);
+    try {
+      const payload = prepareLevelPayload(levelDraft);
+      if (editingLevelId) {
+        await updateCustomerLevelSvc(editingLevelId, payload);
+        onNotify?.('Nivel actualizado', 'success');
+      } else {
+        await createCustomerLevelSvc(payload);
+        onNotify?.('Nivel creado', 'success');
+      }
+      await loadLevels();
+      resetLevelForm();
+    } catch (err: any) {
+      const code = err?.code || err?.message;
+      if (code === 'LEVEL_DUPLICATE') {
+        setLevelErrors({ name: 'Ya existe un nivel con ese nombre' });
+      } else if (code === 'LEVEL_NAME_REQUIRED') {
+        setLevelErrors({ name: 'Nombre obligatorio' });
+      } else if (code === 'LEVEL_DISCOUNT_INVALID') {
+        setLevelErrors({ discountPercent: 'Descuento entre 0 y 100' });
+      } else if (code === 'LEVEL_CRITERIA_REQUIRED') {
+        setLevelErrors({ criteria: 'Define al menos un criterio (monto o compras)' });
+      } else {
+        console.error('Error al guardar nivel', err);
+        onNotify?.('No se pudo guardar el nivel', 'error');
+      }
+    } finally {
+      setLevelSaving(false);
+    }
+  };
+
+  const handleEditLevel = (level: CustomerLevel) => {
+    setEditingLevelId(level.id);
+    setLevelDraft({
+      name: level.name,
+      discountPercent: level.discountPercent,
+      logicOp: level.logicOp,
+      minAmount: level.minAmount ?? null,
+      minOrders: level.minOrders ?? null,
+      withinDays: level.withinDays ?? null,
+      priority: level.priority ?? 0,
+      active: level.active !== false,
+    });
+    setLevelErrors({});
+  };
+
+  const handleDeleteLevel = async (level: CustomerLevel) => {
+    const approved = onConfirm ? await onConfirm(`¿Eliminar nivel "${level.name}"?`) : true;
+    if (!approved) return;
+    try {
+      await deleteCustomerLevelSvc(level.id);
+      onNotify?.('Nivel eliminado', 'success');
+      if (editingLevelId === level.id) resetLevelForm();
+      await loadLevels();
+    } catch (err) {
+      console.error('Error eliminando nivel', err);
+      onNotify?.('No se pudo eliminar el nivel', 'error');
+    }
+  };
+
+  const handleRecalculateLevels = async () => {
+    const approved = onConfirm ? await onConfirm('¿Recalcular niveles ahora?', 'Se evaluarán todos los clientes registrados.') : true;
+    if (!approved) return;
+    setRecalculatingLevels(true);
+    try {
+      const res = await recalculateCustomerLevelsSvc();
+      onNotify?.(`Niveles recalculados (${res.updated}/${res.examined})`, 'success');
+      await loadLevels();
+    } catch (err) {
+      console.error('Error recalculando niveles', err);
+      onNotify?.('No se pudo recalcular los niveles', 'error');
+    } finally {
+      setRecalculatingLevels(false);
     }
   };
 
@@ -146,22 +283,6 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
     setSavingGoal(true);
     try { await setMonthlyGoalSvc(monthlyGoal); onNotify?.('Meta mensual guardada', 'success'); }
     finally { setSavingGoal(false); }
-  };
-
-  const onSaveDiscounts = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingDisc(true);
-    try { await setDiscountLevelsSvc(disc); onNotify?.('Descuentos guardados', 'success'); }
-    finally { setSavingDisc(false); }
-  };
-
-  const onUpdateCustomerLevels = async () => {
-    setUpdatingLevels(true); setLevelsResult(null);
-    try {
-      const res = await updateCustomerLevelsSvc();
-      setLevelsResult(res);
-      onNotify?.(`Niveles actualizados: ${res.updated}/${res.examined}`, 'success');
-    } finally { setUpdatingLevels(false); }
   };
 
   const onEditSaleStatus = async (s: Sale, nextStatus: Sale['status']) => {
@@ -253,10 +374,9 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
         {[
           { key: 'generales', label: 'Generales' },
           { key: 'dashboard', label: 'Dashboard' },
-          { key: 'clientes', label: 'Clientes' },
+          { key: 'niveles', label: 'Niveles de clientes' },
           { key: 'ventas', label: 'Ventas del día' },
           { key: 'historicas', label: 'Ventas históricas' },
-          { key: 'descuentos', label: 'Descuentos por nivel' },
           { key: 'admin', label: '⚠️ Administración avanzada' },
         ].map(t => (
           <button key={t.key} type="button" onClick={() => setTab(t.key as any)}
@@ -329,56 +449,150 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
             </form>
           )}
 
-          {tab === 'clientes' && (
-            <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: 16, maxWidth: 720 }}>
-              <h3>Actualizar niveles de clientes</h3>
-              <p>Calcula el nivel por gasto histórico y ajusta el descuento (Bronze/Silver/Gold/Platinum).</p>
-              <button onClick={onUpdateCustomerLevels} disabled={updatingLevels}>{updatingLevels ? 'Procesando…' : 'Actualizar niveles'}</button>
-              {levelsResult && (
-                <div style={{ marginTop: 8, color: '#333' }}>Actualizados: {levelsResult.updated} de {levelsResult.examined}</div>
-              )}
-
-              <hr style={{ margin: '16px 0' }} />
-              <h4>Reglas de nivelación</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label>Criterio</label>
-                  <select value={rules.criteria} onChange={(e)=> setRules({ ...rules, criteria: e.target.value as any })}>
-                    <option value="amount">Por monto gastado</option>
-                    <option value="purchases">Por número de compras</option>
-                  </select>
+          {tab === 'niveles' && (
+            <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                <h3 style={{ margin: 0 }}>Niveles de clientes</h3>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button type="button" onClick={handleRecalculateLevels} disabled={recalculatingLevels}>
+                    {recalculatingLevels ? 'Recalculando…' : 'Recalcular niveles ahora'}
+                  </button>
+                  <button type="button" onClick={resetLevelForm} disabled={levelSaving}>
+                    {editingLevelId ? 'Nuevo nivel' : 'Limpiar formulario'}
+                  </button>
                 </div>
-                {rules.criteria === 'purchases' && (
-                  <div>
-                    <label>Periodo (meses)</label>
-                    <input type="number" min={1} value={rules.periodMonths ?? 6} onChange={(e)=> setRules({ ...rules, periodMonths: Math.max(1, Number(e.target.value)||6) })} />
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                {levelsLoading ? (
+                  <div>Cargando niveles…</div>
+                ) : customerLevels.length === 0 ? (
+                  <div style={{ color: '#666' }}>Aún no hay niveles configurados.</div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: 'left', padding: 8 }}>Nombre</th>
+                          <th style={{ textAlign: 'left', padding: 8 }}>% Descuento</th>
+                          <th style={{ textAlign: 'left', padding: 8 }}>Criterio</th>
+                          <th style={{ textAlign: 'left', padding: 8 }}>Prioridad</th>
+                          <th style={{ textAlign: 'left', padding: 8 }}>Estado</th>
+                          <th style={{ textAlign: 'center', padding: 8 }}>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customerLevels.map((level) => (
+                          <tr key={level.id} style={{ borderTop: '1px solid #eee' }}>
+                            <td style={{ padding: 8 }}>{level.name}</td>
+                            <td style={{ padding: 8 }}>{level.discountPercent}%</td>
+                            <td style={{ padding: 8 }}>{formatLevelCriteria(level)}</td>
+                            <td style={{ padding: 8 }}>{level.priority ?? 0}</td>
+                            <td style={{ padding: 8 }}>{level.active === false ? 'Inactivo' : 'Activo'}</td>
+                            <td style={{ padding: 8, textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 8 }}>
+                              <button type="button" onClick={() => handleEditLevel(level)}>Editar</button>
+                              <button type="button" onClick={() => handleDeleteLevel(level)}>Eliminar</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginTop: 10 }}>
-                <div>
-                  <label>Bronze</label>
-                  <input type="number" min={0} value={rules.thresholds.Bronze} onChange={(e)=> setRules({ ...rules, thresholds: { ...rules.thresholds, Bronze: Math.max(0, Number(e.target.value)||0) } })} />
+
+              <form onSubmit={handleLevelSubmit} style={{ marginTop: 16, display: 'grid', gap: 12 }}>
+                <h4 style={{ margin: 0 }}>{editingLevelId ? `Editar nivel #${editingLevelId}` : 'Nuevo nivel'}</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+                  <div>
+                    <label>Nombre</label>
+                    <input value={levelDraft.name} onChange={(e) => setLevelDraft({ ...levelDraft, name: e.target.value })} />
+                    {levelErrors.name && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.name}</div>}
+                  </div>
+                  <div>
+                    <label>Descuento (%)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={levelDraft.discountPercent}
+                      onChange={(e) => setLevelDraft({ ...levelDraft, discountPercent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                    />
+                    {levelErrors.discountPercent && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.discountPercent}</div>}
+                  </div>
+                  <div>
+                    <label>Lógica</label>
+                    <select value={levelDraft.logicOp} onChange={(e) => setLevelDraft({ ...levelDraft, logicOp: e.target.value === 'OR' ? 'OR' : 'AND' })}>
+                      <option value="AND">AND (cumplir todos)</option>
+                      <option value="OR">OR (cumplir alguno)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Monto mínimo</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={levelDraft.minAmount ?? ''}
+                      placeholder="Sin monto"
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setLevelDraft({ ...levelDraft, minAmount: value === '' ? null : Math.max(0, Number(value) || 0) });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label>Compras mínimas</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={levelDraft.minOrders ?? ''}
+                      placeholder="Sin mínimo"
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setLevelDraft({ ...levelDraft, minOrders: value === '' ? null : Math.max(0, Math.floor(Number(value) || 0)) });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label>Ventana (días)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={levelDraft.withinDays ?? ''}
+                      placeholder="Histórico completo"
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setLevelDraft({ ...levelDraft, withinDays: value === '' ? null : Math.max(1, Math.floor(Number(value) || 0)) });
+                      }}
+                    />
+                    {levelErrors.withinDays && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.withinDays}</div>}
+                  </div>
+                  <div>
+                    <label>Prioridad</label>
+                    <input
+                      type="number"
+                      value={levelDraft.priority}
+                      onChange={(e) => setLevelDraft({ ...levelDraft, priority: Math.floor(Number(e.target.value) || 0) })}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      id="nivel-activo"
+                      type="checkbox"
+                      checked={levelDraft.active}
+                      onChange={(e) => setLevelDraft({ ...levelDraft, active: e.target.checked })}
+                    />
+                    <label htmlFor="nivel-activo">Activo</label>
+                  </div>
                 </div>
-                <div>
-                  <label>Silver</label>
-                  <input type="number" min={0} value={rules.thresholds.Silver} onChange={(e)=> setRules({ ...rules, thresholds: { ...rules.thresholds, Silver: Math.max(0, Number(e.target.value)||0) } })} />
+                {levelErrors.criteria && <div style={{ color: '#d32f2f', fontSize: 12 }}>{levelErrors.criteria}</div>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="submit" disabled={levelSaving}>{levelSaving ? 'Guardando…' : editingLevelId ? 'Guardar nivel' : 'Crear nivel'}</button>
+                  {editingLevelId && (
+                    <button type="button" onClick={resetLevelForm} disabled={levelSaving}>Cancelar</button>
+                  )}
                 </div>
-                <div>
-                  <label>Gold</label>
-                  <input type="number" min={0} value={rules.thresholds.Gold} onChange={(e)=> setRules({ ...rules, thresholds: { ...rules.thresholds, Gold: Math.max(0, Number(e.target.value)||0) } })} />
-                </div>
-                <div>
-                  <label>Platinum</label>
-                  <input type="number" min={0} value={rules.thresholds.Platinum} onChange={(e)=> setRules({ ...rules, thresholds: { ...rules.thresholds, Platinum: Math.max(0, Number(e.target.value)||0) } })} />
-                </div>
-              </div>
-              <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                <button type="button" onClick={async ()=> { setSavingRules(true); try { await setCustomerLevelRulesSvc(rules); onNotify?.('Reglas guardadas', 'success'); } finally { setSavingRules(false); } }} disabled={savingRules}>
-                  {savingRules ? 'Guardando…' : 'Guardar reglas de nivelación'}
-                </button>
-                <button type="button" onClick={async ()=> setRules(await getCustomerLevelRulesSvc())}>Restaurar</button>
-              </div>
+              </form>
             </div>
           )}
 
@@ -416,33 +630,7 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
             </div>
           )}
 
-          {tab === 'descuentos' && (
-            <form onSubmit={onSaveDiscounts} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: 16, maxWidth: 640 }}>
-              <h3>Descuentos por nivel</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                <div>
-                  <label>Bronze (%)</label>
-                  <input type="number" min={0} max={100} value={disc.Bronze} onChange={e => setDisc({ ...disc, Bronze: clamp(Number(e.target.value)) })} />
-                </div>
-                <div>
-                  <label>Silver (%)</label>
-                  <input type="number" min={0} max={100} value={disc.Silver} onChange={e => setDisc({ ...disc, Silver: clamp(Number(e.target.value)) })} />
-                </div>
-                <div>
-                  <label>Gold (%)</label>
-                  <input type="number" min={0} max={100} value={disc.Gold} onChange={e => setDisc({ ...disc, Gold: clamp(Number(e.target.value)) })} />
-                </div>
-                <div>
-                  <label>Platinum (%)</label>
-                  <input type="number" min={0} max={100} value={disc.Platinum} onChange={e => setDisc({ ...disc, Platinum: clamp(Number(e.target.value)) })} />
-                </div>
-              </div>
-              <div style={{ marginTop: 10 }}>
-                <button type="submit" disabled={savingDisc}>{savingDisc ? 'Guardando…' : 'Guardar cambios'}</button>
-                <button type="button" onClick={async () => setDisc(await getDiscountLevelsSvc())} style={{ marginLeft: 8 }}>Restaurar</button>
-              </div>
-            </form>
-          )}
+          {/* La pestaña de descuentos fue sustituida por la gestión de niveles dinámicos */}
 
           {tab === 'historicas' && (
             <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: 16 }}>
@@ -538,4 +726,3 @@ export const ConfiguracionPage: React.FC<ConfiguracionPageProps> = ({ onNotify, 
   );
 };
 
-function clamp(n: number) { return Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0)); }

@@ -19,7 +19,7 @@ export interface CreateSaleDTO {
   paymentMethod: 'Efectivo' | 'Tarjeta' | 'Transferencia';
   items: SaleItemDTO[];
   notes?: string;
-  appliedDiscountLevel?: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+  appliedDiscountLevel?: string | null;
   appliedDiscountPercent?: number;
 }
 

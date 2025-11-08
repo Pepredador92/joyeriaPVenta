@@ -391,6 +391,60 @@ class JoyeriaApp {
       }
     });
 
+    ipcMain.handle(IPC_CHANNELS.GET_CUSTOMER_LEVELS, async () => {
+      try {
+        return await databaseService.getCustomerLevels();
+      } catch (error) {
+        log.error('Error getting customer levels:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CREATE_CUSTOMER_LEVEL, async (_evt, levelData) => {
+      try {
+        return await databaseService.createCustomerLevel(levelData);
+      } catch (error) {
+        log.error('Error creating customer level:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.UPDATE_CUSTOMER_LEVEL, async (_evt, id: number, levelData) => {
+      try {
+        return await databaseService.updateCustomerLevel(id, levelData);
+      } catch (error) {
+        log.error('Error updating customer level:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.DELETE_CUSTOMER_LEVEL, async (_evt, id: number) => {
+      try {
+        return await databaseService.deleteCustomerLevel(id);
+      } catch (error) {
+        log.error('Error deleting customer level:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.COMPUTE_CUSTOMER_LEVEL, async (_evt, id: number) => {
+      try {
+        return await databaseService.computeCustomerLevel(id);
+      } catch (error) {
+        log.error('Error computing customer level:', error);
+        throw error;
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.RECOMPUTE_CUSTOMER_LEVELS, async () => {
+      try {
+        return await databaseService.recomputeCustomerLevels();
+      } catch (error) {
+        log.error('Error recomputing customer levels:', error);
+        throw error;
+      }
+    });
+
     // Logging básico
     ipcMain.handle(IPC_CHANNELS.LOG_INFO, async (_evt, msg: string) => {
       try { log.info(msg); } catch {}

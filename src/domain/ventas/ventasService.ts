@@ -1,26 +1,3 @@
-// Domain service for Ventas business rules
-// This module is UI-agnostic and contains pure functions plus thin IPC calls
-import * as cfg from '../configuracion/configuracionService';
-
-// Alias tolerante a nombres antiguos del servicio de configuración
-type DiscountLevel = {
-  id: number;
-  name: string;
-  discount_percent: number;
-  priority?: number;
-  active?: number;
-  logic_op?: 'AND' | 'OR';
-  min_amount?: number | null;
-  min_orders?: number | null;
-  within_days?: number | null;
-};
-
-const getDiscountLevelsCfg: () => Promise<DiscountLevel[]> =
-  (cfg as any).getDiscountLevels ??
-  (cfg as any).listCustomerLevels ??
-  (cfg as any).getCustomerLevels ??
-  (async () => []);
-
 export type PaymentMethod = 'Efectivo' | 'Tarjeta' | 'Transferencia';
 
 const normalizeCategoryId = (value: string) => (value || '').toString().trim().toLowerCase();
@@ -55,8 +32,6 @@ export type QuickSale = {
   precioUnitario: number;
   notas?: string;
 };
-
-export type DiscountMap = { [level: string]: number };
 
 export type VentasData = {
   products: any[];
@@ -109,50 +84,6 @@ export async function loadVentasData(): Promise<VentasData> {
     .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 10);
   return { products: productsData, customers: customersData, recentSales };
-}
-
-export function readDiscountMapFromLocal(defaults: DiscountMap = { Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 }): DiscountMap {
-  try {
-    const dl = localStorage.getItem('discountLevels');
-    if (dl) {
-      const parsed = JSON.parse(dl as string);
-      return {
-        Bronze: (parsed.Bronze ?? 0) / 100,
-        Silver: (parsed.Silver ?? 5) / 100,
-        Gold: (parsed.Gold ?? 8) / 100,
-        Platinum: (parsed.Platinum ?? 12) / 100,
-      };
-    }
-  } catch {}
-  return defaults;
-}
-
-// Cargar mapa de descuentos desde Configuración (porcentaje → fracción)
-export async function loadDiscountMapFromSettings(): Promise<DiscountMap> {
-  try {
-    const raw: any = await getDiscountLevelsCfg();
-    const map: DiscountMap = {};
-    if (Array.isArray(raw)) {
-      for (const entry of raw) {
-        if (!entry) continue;
-        const name = (entry.name || '').toString().trim();
-        if (!name) continue;
-        const percent = Number(entry.discount_percent ?? 0);
-        map[name] = Number.isFinite(percent) ? Math.max(0, percent) / 100 : 0;
-      }
-    } else if (raw && typeof raw === 'object') {
-      for (const [name, percent] of Object.entries(raw as Record<string, number>)) {
-        const trimmed = (name || '').toString().trim();
-        if (!trimmed) continue;
-        const value = Number(percent);
-        map[trimmed] = Number.isFinite(value) ? Math.max(0, value) / 100 : 0;
-      }
-    }
-    if (Object.keys(map).length) {
-      return map;
-    }
-  } catch {}
-  return { Bronze: 0, Silver: 0.05, Gold: 0.10, Platinum: 0.15 };
 }
 
 export function readTaxRateFromLocal(defaultRate = 0.16): number {
@@ -270,9 +201,10 @@ export function computeFilteredProducts(
   });
 }
 
-export function computeTotals(items: OrderItem[], selectedCustomer: any, discountMap: DiscountMap, taxRate: number) {
+export function computeTotals(items: OrderItem[], selectedCustomer: any, taxRate: number) {
   const subtotal = items.reduce((s, i) => s + i.unitPrice * i.quantity, 0);
-  const discountRate = selectedCustomer ? discountMap[selectedCustomer.discountLevel] || 0 : 0;
+  const percent = selectedCustomer ? Number(selectedCustomer.levelDiscountPercent ?? selectedCustomer.discountPercent ?? 0) : 0;
+  const discountRate = Number.isFinite(percent) ? Math.max(0, percent) / 100 : 0;
   const discount = +(subtotal * discountRate).toFixed(2);
   const tax = +(((subtotal - discount) * taxRate)).toFixed(2);
   const total = +(subtotal - discount + tax).toFixed(2);
@@ -312,6 +244,13 @@ export async function confirmOrder(
     .map((i) => `Categoría: ${i.categoryName}${i.notes ? ' | ' + i.notes : ''}`);
 
   const appliedDiscountPercent = totals.subtotal > 0 ? +(totals.discount / totals.subtotal * 100).toFixed(2) : 0;
+  const selectedLevelName = selectedCustomer?.levelName || selectedCustomer?.discountLevel || null;
+  const selectedLevelPercent = selectedCustomer
+    ? Number(selectedCustomer.levelDiscountPercent ?? selectedCustomer.discountPercent ?? appliedDiscountPercent)
+    : appliedDiscountPercent;
+  const normalizedLevelPercent = Number.isFinite(selectedLevelPercent)
+    ? Number(selectedLevelPercent)
+    : appliedDiscountPercent;
 
   const saleData = {
     customerId: selectedCustomer?.id || undefined,
@@ -321,10 +260,10 @@ export async function confirmOrder(
     tax: totals.tax,
     total: totals.total,
     items: saleItems,
-    notes: manualNotes.join(' || ') || undefined,
+    notes: manualNotes.length ? manualNotes.join('\n') : undefined,
     createdAt: new Date().toISOString(),
-    appliedDiscountLevel: (selectedCustomer?.discountLevel as any) || 'Bronze',
-    appliedDiscountPercent,
+    appliedDiscountLevel: selectedLevelName,
+    appliedDiscountPercent: normalizedLevelPercent,
   } as any;
 
   const api = (window as any).electronAPI;

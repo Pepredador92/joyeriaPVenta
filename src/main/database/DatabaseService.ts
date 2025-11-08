@@ -1,4 +1,4 @@
-import { Product, Customer, Sale, CashSession, Setting, Category, InventoryMovement } from '../../shared/types';
+import { Product, Customer, Sale, CashSession, Setting, Category, InventoryMovement, CustomerLevel } from '../../shared/types';
 import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
@@ -9,6 +9,7 @@ class DatabaseService {
   private categories: Category[] = [];
   private categoryIndex = new Map<string, Category>();
   private customers: Customer[] = [];
+  private customerLevels: CustomerLevel[] = [];
   private sales: Sale[] = [];
   private cashSessions: CashSession[] = [];
   private settings: Setting[] = [
@@ -35,6 +36,7 @@ class DatabaseService {
   private customersFilePath: string | null = null;
   private salesFilePath: string | null = null;
   private cashSessionsFilePath: string | null = null;
+  private customerLevelsFilePath: string | null = null;
 
   private normalizeSku(value: string | undefined | null): string {
     return (value || '')
@@ -64,10 +66,19 @@ class DatabaseService {
       .trim();
   }
 
+  private customerLevelIndex = new Map<number, CustomerLevel>();
+
   private syncCategoryIndex() {
     this.categoryIndex = new Map<string, Category>();
     for (const category of this.categories) {
       this.categoryIndex.set(category.id, { ...category });
+    }
+  }
+
+  private syncCustomerLevelIndex() {
+    this.customerLevelIndex = new Map<number, CustomerLevel>();
+    for (const level of this.customerLevels) {
+      this.customerLevelIndex.set(level.id, { ...level });
     }
   }
 
@@ -116,6 +127,210 @@ class DatabaseService {
     this.syncCategoryIndex();
   }
 
+  private normalizeLevelName(name: string | undefined | null): string {
+    return (name || '').toString().trim();
+  }
+
+  private sanitizeLevelDraft(
+    draft: Partial<CustomerLevel> & {
+      name?: string;
+      discountPercent?: number;
+      logicOp?: string;
+      minAmount?: number | null;
+      minOrders?: number | null;
+      withinDays?: number | null;
+      priority?: number;
+      active?: boolean;
+    },
+    fallbackName?: string
+  ): Omit<CustomerLevel, 'id' | 'createdAt' | 'updatedAt'> {
+    const nameSource = draft.name ?? fallbackName ?? '';
+    const name = this.normalizeLevelName(nameSource);
+    if (!name) {
+      const err = new Error('LEVEL_NAME_REQUIRED');
+      (err as any).code = 'LEVEL_NAME_REQUIRED';
+      throw err;
+    }
+    const discount = Number(draft.discountPercent ?? draft.discount_percent ?? 0);
+    if (!Number.isFinite(discount) || discount < 0 || discount > 100) {
+      const err = new Error('LEVEL_DISCOUNT_INVALID');
+      (err as any).code = 'LEVEL_DISCOUNT_INVALID';
+      throw err;
+    }
+    const logicOp: 'AND' | 'OR' = draft.logicOp === 'OR' ? 'OR' : 'AND';
+    const minAmount = draft.minAmount === null || draft.minAmount === undefined
+      ? null
+      : Math.max(0, Number(draft.minAmount) || 0);
+    const minOrders = draft.minOrders === null || draft.minOrders === undefined
+      ? null
+      : Math.max(0, Math.floor(Number(draft.minOrders) || 0));
+    const withinDays = draft.withinDays === null || draft.withinDays === undefined
+      ? null
+      : Math.max(1, Math.floor(Number(draft.withinDays) || 0));
+    if (minAmount === null && minOrders === null) {
+      const err = new Error('LEVEL_CRITERIA_REQUIRED');
+      (err as any).code = 'LEVEL_CRITERIA_REQUIRED';
+      throw err;
+    }
+    return {
+      name,
+      discountPercent: Math.max(0, Math.min(100, discount)),
+      logicOp,
+      minAmount,
+      minOrders,
+      withinDays,
+      priority: Math.floor(Number(draft.priority ?? 0) || 0),
+      active: draft.active === false ? false : true,
+    };
+  }
+
+  private ensureDefaultCustomerLevels() {
+    if (this.customerLevels.length > 0) {
+      this.syncCustomerLevelIndex();
+      return;
+    }
+    const now = new Date().toISOString();
+    const defaults: Array<Omit<CustomerLevel, 'id'>> = [
+      {
+        name: 'Bronze',
+        discountPercent: 0,
+        logicOp: 'OR',
+        minAmount: 0,
+        minOrders: 0,
+        withinDays: null,
+        priority: 0,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: 'Silver',
+        discountPercent: 5,
+        logicOp: 'OR',
+        minAmount: 15000,
+        minOrders: 3,
+        withinDays: 365,
+        priority: 10,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: 'Gold',
+        discountPercent: 10,
+        logicOp: 'OR',
+        minAmount: 50000,
+        minOrders: 5,
+        withinDays: 365,
+        priority: 20,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: 'Platinum',
+        discountPercent: 15,
+        logicOp: 'OR',
+        minAmount: 100000,
+        minOrders: 8,
+        withinDays: 365,
+        priority: 30,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    this.customerLevels = defaults.map((level, index) => ({ id: index + 1, ...level }));
+    this.syncCustomerLevelIndex();
+  }
+
+  private findLevelByIdOrName(id?: number | null, name?: string | null): CustomerLevel | null {
+    if (typeof id === 'number' && this.customerLevelIndex.has(id)) {
+      return this.customerLevelIndex.get(id)!;
+    }
+    const normalized = this.normalizeLevelName(name);
+    if (!normalized) return null;
+    const lower = normalized.toLowerCase();
+    const found = this.customerLevels.find((level) => level.name.toLowerCase() === lower);
+    return found || null;
+  }
+
+  private summarizeCustomerPurchases(customerId: number, withinDays: number | null) {
+    const now = Date.now();
+    const threshold = withinDays && withinDays > 0 ? now - withinDays * 86400000 : null;
+    let amount = 0;
+    let orders = 0;
+    for (const sale of this.sales) {
+      if (!sale || sale.customerId !== customerId) continue;
+      if (sale.status && sale.status !== 'Completada') continue;
+      const created = new Date(sale.createdAt || sale.updatedAt || '').getTime();
+      if (Number.isNaN(created)) continue;
+      if (threshold !== null && created < threshold) continue;
+      const total = Number(sale.total ?? 0);
+      amount += Number.isFinite(total) ? Math.max(0, total) : 0;
+      orders += 1;
+    }
+    return { amount, orders };
+  }
+
+  private determineCustomerLevel(customerId: number): CustomerLevel | null {
+    if (!this.customerLevels.length) return null;
+    const activeLevels = this.customerLevels.filter((level) => level && level.active !== false);
+    if (!activeLevels.length) return null;
+    const cache = new Map<number, { amount: number; orders: number }>();
+    const getStats = (withinDays: number | null) => {
+      const key = withinDays === null ? -1 : withinDays;
+      if (!cache.has(key)) {
+        cache.set(key, this.summarizeCustomerPurchases(customerId, withinDays));
+      }
+      return cache.get(key)!;
+    };
+    const candidates: Array<{ level: CustomerLevel; priority: number; discount: number }> = [];
+    for (const level of activeLevels) {
+      const stats = getStats(level.withinDays ?? null);
+      const meetsAmount = level.minAmount === null || stats.amount >= level.minAmount;
+      const meetsOrders = level.minOrders === null || stats.orders >= level.minOrders;
+      let qualifies: boolean;
+      if (level.logicOp === 'OR') {
+        const checks: boolean[] = [];
+        if (level.minAmount !== null) checks.push(meetsAmount);
+        if (level.minOrders !== null) checks.push(meetsOrders);
+        qualifies = checks.length === 0 ? true : checks.some(Boolean);
+      } else {
+        qualifies = (level.minAmount === null || meetsAmount) && (level.minOrders === null || meetsOrders);
+      }
+      if (qualifies) {
+        candidates.push({ level, priority: level.priority ?? 0, discount: level.discountPercent ?? 0 });
+      }
+    }
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => {
+      if (b.priority !== a.priority) return b.priority - a.priority;
+      if (b.discount !== a.discount) return b.discount - a.discount;
+      return a.level.id - b.level.id;
+    });
+    return candidates[0].level;
+  }
+
+  private applyLevelToCustomer(customer: Customer, level: CustomerLevel | null, touchTimestamp = true): boolean {
+    const nextId = level ? level.id : null;
+    const nextName = level ? level.name : null;
+    const nextPercent = level ? level.discountPercent : null;
+    const prevId = customer.levelId ?? null;
+    const prevName = customer.levelName ?? null;
+    const prevPercent = customer.levelDiscountPercent ?? null;
+    const prevLegacy = customer.discountLevel ?? null;
+    const changed = prevId !== nextId || prevName !== nextName || prevPercent !== nextPercent || prevLegacy !== (nextName || null);
+    customer.levelId = nextId;
+    customer.levelName = nextName;
+    customer.levelDiscountPercent = nextPercent;
+    customer.discountLevel = nextName || undefined;
+    if (changed && touchTimestamp) {
+      customer.updatedAt = new Date().toISOString();
+    }
+    return changed;
+  }
+
   private async persistCategories() {
     if (!this.categoriesFilePath) return;
     try {
@@ -128,6 +343,56 @@ class DatabaseService {
       );
     } catch (e) {
       console.warn('⚠️ Failed to save categories to disk:', e);
+    }
+  }
+
+  private async loadCustomerLevelsFromDiskSafe() {
+    if (!this.customerLevelsFilePath) return;
+    try {
+      if (fs.existsSync(this.customerLevelsFilePath)) {
+        const raw = await fs.promises.readFile(this.customerLevelsFilePath, 'utf-8');
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          this.customerLevels = arr
+            .filter((level) => level && (typeof level.name === 'string' || typeof level.id === 'number'))
+            .map((level, index) => ({
+              id: typeof level.id === 'number' ? level.id : index + 1,
+              name: this.normalizeLevelName(level.name) || `Nivel ${index + 1}`,
+              discountPercent: Number.isFinite(Number(level.discountPercent))
+                ? Math.max(0, Math.min(100, Number(level.discountPercent)))
+                : 0,
+              logicOp: level.logicOp === 'OR' ? 'OR' : 'AND',
+              minAmount: level.minAmount === null || level.minAmount === undefined
+                ? null
+                : Math.max(0, Number(level.minAmount) || 0),
+              minOrders: level.minOrders === null || level.minOrders === undefined
+                ? null
+                : Math.max(0, Math.floor(Number(level.minOrders) || 0)),
+              withinDays: level.withinDays === null || level.withinDays === undefined
+                ? null
+                : Math.max(1, Math.floor(Number(level.withinDays) || 0)),
+              priority: Math.floor(Number(level.priority ?? 0) || 0),
+              active: level.active === false ? false : true,
+              createdAt: level.createdAt || new Date().toISOString(),
+              updatedAt: level.updatedAt || new Date().toISOString(),
+            }));
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Failed to load customer levels from disk:', e);
+    } finally {
+      this.ensureDefaultCustomerLevels();
+    }
+  }
+
+  private async saveCustomerLevelsToDiskSafe() {
+    if (!this.customerLevelsFilePath) return;
+    try {
+      const dir = path.dirname(this.customerLevelsFilePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(this.customerLevelsFilePath, JSON.stringify(this.customerLevels, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('⚠️ Failed to save customer levels to disk:', e);
     }
   }
 
@@ -268,37 +533,176 @@ class DatabaseService {
   }
 
   async createCustomer(customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>): Promise<Customer> {
+    const now = new Date().toISOString();
     const newCustomer: Customer = {
       id: Math.max(...this.customers.map(c => c.id), 0) + 1,
-      ...customerData,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+      name: customerData.name,
+      email: customerData.email,
+      phone: customerData.phone,
+      alternatePhone: customerData.alternatePhone,
+      address: customerData.address,
+      birthDate: customerData.birthDate,
+      gender: customerData.gender,
+      occupation: customerData.occupation,
+      customerType: customerData.customerType,
+      referredBy: customerData.referredBy,
+      preferredContact: customerData.preferredContact,
+      preferredCategories: customerData.preferredCategories,
+      budgetRange: customerData.budgetRange,
+      specialOccasions: customerData.specialOccasions,
+      notes: customerData.notes,
+      tags: customerData.tags,
+      isActive: customerData.isActive,
+      levelId: customerData.levelId ?? null,
+      levelName: customerData.levelName ?? undefined,
+      levelDiscountPercent: customerData.levelDiscountPercent ?? undefined,
+      discountLevel: customerData.discountLevel,
+      createdAt: now,
+      updatedAt: now,
+    } as Customer;
+    const initialLevel = this.findLevelByIdOrName(newCustomer.levelId, newCustomer.levelName || newCustomer.discountLevel || null);
+    this.applyLevelToCustomer(newCustomer, initialLevel, false);
     this.customers.push(newCustomer);
-  await this.saveCustomersToDiskSafe();
-  return newCustomer;
+    await this.saveCustomersToDiskSafe();
+    return newCustomer;
   }
 
   async updateCustomer(id: number, customerData: Partial<Customer>): Promise<Customer | null> {
     const index = this.customers.findIndex(c => c.id === id);
     if (index === -1) return null;
-    
-    this.customers[index] = {
-      ...this.customers[index],
+    const current = this.customers[index];
+    const merged: Customer = {
+      ...current,
       ...customerData,
-      updatedAt: new Date().toISOString()
     };
-  await this.saveCustomersToDiskSafe();
-  return this.customers[index];
+    const targetLevel = this.findLevelByIdOrName(
+      customerData.levelId !== undefined ? customerData.levelId : merged.levelId,
+      customerData.levelName ?? customerData.discountLevel ?? merged.levelName ?? merged.discountLevel ?? null
+    );
+    this.applyLevelToCustomer(merged, targetLevel);
+    merged.updatedAt = new Date().toISOString();
+    this.customers[index] = merged;
+    await this.saveCustomersToDiskSafe();
+    return this.customers[index];
   }
 
   async deleteCustomer(id: number): Promise<boolean> {
     const index = this.customers.findIndex(c => c.id === id);
     if (index === -1) return false;
-    
+
   this.customers.splice(index, 1);
   await this.saveCustomersToDiskSafe();
   return true;
+  }
+
+  async getCustomerLevels(): Promise<CustomerLevel[]> {
+    return this.customerLevels.map((level) => ({ ...level }));
+  }
+
+  async createCustomerLevel(levelData: Partial<CustomerLevel> & { name?: string }): Promise<CustomerLevel> {
+    const payload = this.sanitizeLevelDraft(levelData);
+    const normalizedName = payload.name.toLowerCase();
+    if (this.customerLevels.some((level) => level.name.toLowerCase() === normalizedName)) {
+      const err = new Error('LEVEL_DUPLICATE');
+      (err as any).code = 'LEVEL_DUPLICATE';
+      throw err;
+    }
+    const now = new Date().toISOString();
+    const newLevel: CustomerLevel = {
+      id: Math.max(0, ...this.customerLevels.map((level) => level.id)) + 1,
+      ...payload,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.customerLevels.push(newLevel);
+    this.syncCustomerLevelIndex();
+    await this.saveCustomerLevelsToDiskSafe();
+    return { ...newLevel };
+  }
+
+  async updateCustomerLevel(id: number, levelData: Partial<CustomerLevel> & { name?: string }): Promise<CustomerLevel | null> {
+    const index = this.customerLevels.findIndex((level) => level.id === id);
+    if (index === -1) return null;
+    const existing = this.customerLevels[index];
+    const payload = this.sanitizeLevelDraft(levelData, existing.name);
+    const normalizedName = payload.name.toLowerCase();
+    if (
+      this.customerLevels.some(
+        (level, idx) => idx !== index && level.name.toLowerCase() === normalizedName
+      )
+    ) {
+      const err = new Error('LEVEL_DUPLICATE');
+      (err as any).code = 'LEVEL_DUPLICATE';
+      throw err;
+    }
+    const now = new Date().toISOString();
+    this.customerLevels[index] = {
+      ...existing,
+      ...payload,
+      updatedAt: now,
+    };
+    this.syncCustomerLevelIndex();
+    await this.saveCustomerLevelsToDiskSafe();
+    // Si el nombre cambió, sincronizar clientes
+    if (existing.name !== payload.name) {
+      let touched = false;
+      for (const customer of this.customers) {
+        if (customer.levelId === id) {
+          this.applyLevelToCustomer(customer, this.customerLevels[index], false);
+          touched = true;
+        }
+      }
+      if (touched) {
+        await this.saveCustomersToDiskSafe();
+      }
+    }
+    return { ...this.customerLevels[index] };
+  }
+
+  async deleteCustomerLevel(id: number): Promise<boolean> {
+    const index = this.customerLevels.findIndex((level) => level.id === id);
+    if (index === -1) return false;
+    this.customerLevels.splice(index, 1);
+    this.syncCustomerLevelIndex();
+    let touched = false;
+    for (const customer of this.customers) {
+      if (customer.levelId === id) {
+        this.applyLevelToCustomer(customer, null, false);
+        touched = true;
+      }
+    }
+    await Promise.all([
+      this.saveCustomerLevelsToDiskSafe(),
+      touched ? this.saveCustomersToDiskSafe() : Promise.resolve(),
+    ]);
+    return true;
+  }
+
+  async computeCustomerLevel(customerId: number): Promise<Customer | null> {
+    const customer = this.customers.find((c) => c.id === customerId);
+    if (!customer) return null;
+    const level = this.determineCustomerLevel(customerId);
+    const changed = this.applyLevelToCustomer(customer, level);
+    if (changed) {
+      await this.saveCustomersToDiskSafe();
+    }
+    return { ...customer };
+  }
+
+  async recomputeCustomerLevels(): Promise<{ updated: number; examined: number }> {
+    let updated = 0;
+    let examined = 0;
+    for (const customer of this.customers) {
+      examined += 1;
+      const level = this.determineCustomerLevel(customer.id);
+      if (this.applyLevelToCustomer(customer, level)) {
+        updated += 1;
+      }
+    }
+    if (updated > 0) {
+      await this.saveCustomersToDiskSafe();
+    }
+    return { updated, examined };
   }
 
   // Ventas
@@ -537,6 +941,13 @@ class DatabaseService {
         this.saveProductsToDiskSafe(),
         this.persistCategories(),
       ]);
+      if (customerId) {
+        try {
+          await this.computeCustomerLevel(customerId);
+        } catch (e) {
+          console.warn('⚠️ Failed to recompute customer level after sale:', e);
+        }
+      }
       return newSale;
     } catch (error: any) {
       if (error?.code === 'CUSTOMER_NOT_FOUND' || error?.code === 'INSUFFICIENT_STOCK' || error?.code === 'INVALID_ITEM') {
@@ -712,7 +1123,9 @@ class DatabaseService {
       this.customersFilePath = path.join(userData, 'customers.json');
       this.salesFilePath = path.join(userData, 'sales.json');
       this.cashSessionsFilePath = path.join(userData, 'cash_sessions.json');
+      this.customerLevelsFilePath = path.join(userData, 'customer_levels.json');
       await this.loadSettingsFromDiskSafe();
+      await this.loadCustomerLevelsFromDiskSafe();
       await Promise.all([
         this.loadCategoriesFromDiskSafe(),
         this.loadProductsFromDiskSafe(),
@@ -854,7 +1267,6 @@ class DatabaseService {
               phone: typeof c.phone === 'string' ? c.phone : undefined,
               alternatePhone: typeof c.alternatePhone === 'string' ? c.alternatePhone : undefined,
               address: typeof c.address === 'string' ? c.address : undefined,
-              discountLevel: (c.discountLevel === 'Silver' || c.discountLevel === 'Gold' || c.discountLevel === 'Platinum') ? c.discountLevel : 'Bronze',
               birthDate: typeof c.birthDate === 'string' ? c.birthDate : undefined,
               gender: typeof c.gender === 'string' ? c.gender : undefined,
               occupation: typeof c.occupation === 'string' ? c.occupation : undefined,
@@ -867,9 +1279,18 @@ class DatabaseService {
               notes: typeof c.notes === 'string' ? c.notes : undefined,
               tags: Array.isArray(c.tags) ? c.tags : undefined,
               isActive: typeof c.isActive === 'boolean' ? c.isActive : undefined,
+              levelId: typeof c.levelId === 'number' ? c.levelId : undefined,
+              levelName: typeof c.levelName === 'string' ? this.normalizeLevelName(c.levelName) : undefined,
+              levelDiscountPercent: Number.isFinite(Number(c.levelDiscountPercent)) ? Number(c.levelDiscountPercent) : undefined,
+              discountLevel: typeof c.discountLevel === 'string' ? this.normalizeLevelName(c.discountLevel) : undefined,
               createdAt: c.createdAt || new Date().toISOString(),
               updatedAt: c.updatedAt || new Date().toISOString()
-            }));
+            }))
+            .map((customer) => {
+              const level = this.findLevelByIdOrName(customer.levelId, customer.levelName || customer.discountLevel || null);
+              this.applyLevelToCustomer(customer, level, false);
+              return customer;
+            });
         }
       }
     } catch (e) {

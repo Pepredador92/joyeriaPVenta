@@ -2,10 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   OrderItem,
   PaymentMethod,
-  DiscountMap,
   getInitialPaymentMethod,
   loadVentasData,
-  readDiscountMapFromLocal,
   readTaxRateFromLocal,
   readTaxRateFromSettings,
   addProductToOrder as addProductToOrderSvc,
@@ -15,7 +13,6 @@ import {
   computeFilteredProducts,
   computeTotals,
   confirmOrder as confirmOrderSvc,
-  loadDiscountMapFromSettings,
   computeCategoryOptionsFromProducts,
 } from '../../../domain/ventas/ventasService';
 import { searchCustomers } from '../../../domain/clientes/clientesService';
@@ -121,8 +118,7 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
 
-  // Configuración de descuentos/IVA
-  const [discountMap, setDiscountMap] = useState<DiscountMap>({ Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 });
+  // Configuración de IVA
   const [taxRate, setTaxRate] = useState(0.16);
 
   const handleCustomerSelect = useCallback((customer: any) => {
@@ -228,13 +224,9 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
   }, [categories, categoryFilter]);
 
   useEffect(() => {
-    // Inicial rápido por localStorage para no bloquear UI
-    setDiscountMap(readDiscountMapFromLocal());
     const localTax = readTaxRateFromLocal();
     setTaxRate(localTax);
-    // Sincronizar desde settings
     readTaxRateFromSettings(localTax).then(setTaxRate).catch(()=>{});
-    loadDiscountMapFromSettings().then(setDiscountMap).catch(()=>{});
   }, []);
 
   // Productos → agregar al pedido
@@ -291,10 +283,10 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
   // Cliente filtrado
 
   // Totales
-  const { subtotal, discount, tax, total } = computeTotals(orderItems, selectedCustomer, discountMap, taxRate);
+  const { subtotal, discount, tax, total, discountRate } = computeTotals(orderItems, selectedCustomer, taxRate);
   const currency = useMemo(()=> new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }), []);
-  const appliedLevel = selectedCustomer?.discountLevel || 'Bronze';
-  const appliedPercent = Math.round(((discountMap[appliedLevel]||0) * 100));
+  const appliedLevel = selectedCustomer?.levelName || selectedCustomer?.discountLevel || 'Sin nivel';
+  const appliedPercent = Math.round(Math.max(0, discountRate || 0) * 100);
 
   const confirmOrder = useCallback(async () => {
     if (orderItems.length === 0 || isConfirming) return;
@@ -452,7 +444,7 @@ export const VentasPage: React.FC<VentasPageProps> = ({ onNotify }) => {
               }}
             >
               <div>
-                Cliente seleccionado: <strong>{selectedCustomer.name}</strong> · Nivel: {selectedCustomer.discountLevel} · Descuento: {Math.round((discountMap[selectedCustomer.discountLevel]||0)*100)}%
+                Cliente seleccionado: <strong>{selectedCustomer.name}</strong> · Nivel: {appliedLevel} · Descuento: {appliedPercent}%
               </div>
               <button
                 type="button"
