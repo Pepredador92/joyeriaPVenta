@@ -2,43 +2,24 @@
 // This module is UI-agnostic and contains pure functions plus thin IPC calls
 import * as cfg from '../configuracion/configuracionService';
 
-// Alias tolerante a cambios de nombre en el servicio de configuración
-type DiscountLevelsResponse = Record<string, number> | Array<Record<string, any>> | null | undefined;
-
-const resolveDiscountLevelsFn = (): (() => Promise<Record<string, number>>) => {
-  const service = cfg as Record<string, any>;
-  const candidateKeys = ['getDiscountLevels', 'listCustomerLevels', 'getCustomerLevels'];
-  for (const key of candidateKeys) {
-    if (typeof service[key] === 'function') {
-      const fn = service[key].bind(service);
-      return async () => {
-        try {
-          const raw: DiscountLevelsResponse = await fn();
-          if (Array.isArray(raw)) {
-            const map: Record<string, number> = {};
-            for (const entry of raw) {
-              if (!entry) continue;
-              const name = (entry.name ?? entry.level ?? '').toString().trim();
-              if (!name) continue;
-              const percent = Number(
-                entry.discount_percent ?? entry.discountPercent ?? entry.discount ?? entry.percent ?? 0
-              );
-              map[name] = Number.isFinite(percent) ? percent : 0;
-            }
-            return map;
-          }
-          if (raw && typeof raw === 'object') {
-            return { ...(raw as Record<string, number>) };
-          }
-        } catch {}
-        return {};
-      };
-    }
-  }
-  return async () => ({} as Record<string, number>);
+// Alias tolerante a nombres antiguos del servicio de configuración
+type DiscountLevel = {
+  id: number;
+  name: string;
+  discount_percent: number;
+  priority?: number;
+  active?: number;
+  logic_op?: 'AND' | 'OR';
+  min_amount?: number | null;
+  min_orders?: number | null;
+  within_days?: number | null;
 };
 
-const getDiscountLevelsCfg = () => resolveDiscountLevelsFn()();
+const getDiscountLevelsCfg: () => Promise<DiscountLevel[]> =
+  (cfg as any).getDiscountLevels ??
+  (cfg as any).listCustomerLevels ??
+  (cfg as any).getCustomerLevels ??
+  (async () => []);
 
 export type PaymentMethod = 'Efectivo' | 'Tarjeta' | 'Transferencia';
 
@@ -149,16 +130,29 @@ export function readDiscountMapFromLocal(defaults: DiscountMap = { Bronze: 0, Si
 // Cargar mapa de descuentos desde Configuración (porcentaje → fracción)
 export async function loadDiscountMapFromSettings(): Promise<DiscountMap> {
   try {
-    const levels = await getDiscountLevelsCfg();
-    return {
-      Bronze: (levels.Bronze ?? 0) / 100,
-      Silver: (levels.Silver ?? 5) / 100,
-      Gold: (levels.Gold ?? 10) / 100,
-      Platinum: (levels.Platinum ?? 15) / 100,
-    };
-  } catch {
-    return { Bronze: 0, Silver: 0.05, Gold: 0.10, Platinum: 0.15 };
-  }
+    const raw: any = await getDiscountLevelsCfg();
+    const map: DiscountMap = {};
+    if (Array.isArray(raw)) {
+      for (const entry of raw) {
+        if (!entry) continue;
+        const name = (entry.name || '').toString().trim();
+        if (!name) continue;
+        const percent = Number(entry.discount_percent ?? 0);
+        map[name] = Number.isFinite(percent) ? Math.max(0, percent) / 100 : 0;
+      }
+    } else if (raw && typeof raw === 'object') {
+      for (const [name, percent] of Object.entries(raw as Record<string, number>)) {
+        const trimmed = (name || '').toString().trim();
+        if (!trimmed) continue;
+        const value = Number(percent);
+        map[trimmed] = Number.isFinite(value) ? Math.max(0, value) / 100 : 0;
+      }
+    }
+    if (Object.keys(map).length) {
+      return map;
+    }
+  } catch {}
+  return { Bronze: 0, Silver: 0.05, Gold: 0.10, Platinum: 0.15 };
 }
 
 export function readTaxRateFromLocal(defaultRate = 0.16): number {
