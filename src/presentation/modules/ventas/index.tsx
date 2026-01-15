@@ -19,26 +19,15 @@ import {
   confirmOrder as confirmOrderSvc,
   loadDiscountMapFromSettings,
 } from '../../../domain/ventas/ventasService';
+import { searchCustomers } from '../../../domain/clientes/clientesService';
 
 const ClienteSelector: React.FC<{ customers: any[]; onSelect: (c: any)=>void }> = ({ customers, onSelect }) => {
   const [q, setQ] = useState('');
-  const term = q.trim().toLowerCase();
-  const list = term.length < 2
-    ? []
-    : customers
-      .filter((c: any) => {
-        const name = (c.name || '').toLowerCase();
-        const email = (c.email || '').toLowerCase();
-        const phone = (c.phone || '').toLowerCase();
-        const alternate = (c.alternatePhone || '').toLowerCase();
-        return (
-          name.includes(term) ||
-          email.includes(term) ||
-          phone.includes(term) ||
-          alternate.includes(term)
-        );
-      })
-      .slice(0, 50);
+  const list = useMemo(() => {
+    const term = q.trim();
+    if (term.length < 2) return [];
+    return searchCustomers(customers, term);
+  }, [customers, q]);
   return (
     <div>
       <input
