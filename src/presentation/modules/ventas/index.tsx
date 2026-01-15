@@ -19,26 +19,26 @@ import {
   confirmOrder as confirmOrderSvc,
   loadDiscountMapFromSettings,
 } from '../../../domain/ventas/ventasService';
-import { searchCustomers } from '../../../domain/clientes/clientesService';
 
-const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) => {
+const ClienteSelector: React.FC<{ customers: any[]; onSelect: (c: any)=>void }> = ({ customers, onSelect }) => {
   const [q, setQ] = useState('');
-  const [list, setList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  useEffect(()=>{
-    let cancel = false;
-    const run = async () => {
-      const term = q.trim();
-      if (term.length < 2) { setList([]); return; }
-      setLoading(true);
-      try {
-        const res = await searchCustomers(term);
-        if (!cancel) setList(res);
-      } finally { if (!cancel) setLoading(false); }
-    };
-    run();
-    return ()=> { cancel = true; };
-  }, [q]);
+  const term = q.trim().toLowerCase();
+  const list = term.length < 2
+    ? []
+    : customers
+      .filter((c: any) => {
+        const name = (c.name || '').toLowerCase();
+        const email = (c.email || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        const alternate = (c.alternatePhone || '').toLowerCase();
+        return (
+          name.includes(term) ||
+          email.includes(term) ||
+          phone.includes(term) ||
+          alternate.includes(term)
+        );
+      })
+      .slice(0, 50);
   return (
     <div>
       <input
@@ -48,8 +48,7 @@ const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) =
         placeholder="Buscar cliente (min 2 caracteres)"
         style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8, marginBottom:6 }}
       />
-      {loading && <div style={{ fontSize:12, color:'#666' }}>Buscando…</div>}
-      {!loading && q.trim().length>=2 && (
+      {q.trim().length>=2 && (
         <div style={{ maxHeight:150, overflow:'auto', border:'1px solid #eee', borderRadius:8 }}>
           {list.length===0 ? (
             <div style={{ padding:8, color:'#666' }}>Sin resultados</div>
@@ -67,13 +66,20 @@ const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) =
 // Página principal del módulo de Ventas (UI) extraída desde App.tsx
 export const VentasPage: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
-  // clientes completos ya no se mantienen en este componente; ClienteSelector consulta al dominio
+  const [customers, setCustomers] = useState<any[]>([]);
   const [recentSales, setRecentSales] = useState<any[]>([]);
 
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
 
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => getInitialPaymentMethod());
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => {
+    let systemSettings: any = null;
+    try {
+      const raw = localStorage.getItem('systemSettings');
+      systemSettings = raw ? JSON.parse(raw) : null;
+    } catch {}
+    return getInitialPaymentMethod(systemSettings);
+  });
 
   const [quickSale, setQuickSale] = useState<QuickSale>({
     fecha: new Date().toISOString().split('T')[0],
@@ -94,8 +100,20 @@ export const VentasPage: React.FC = () => {
 
   const loadData = useCallback(async () => {
     try {
-      const data = await loadVentasData();
+      if (!(window as any).electronAPI) {
+        setProducts([]);
+        setCustomers([]);
+        setRecentSales([]);
+        return;
+      }
+      const [productsData, customersData, salesData] = await Promise.all([
+        (window as any).electronAPI.getProducts(),
+        (window as any).electronAPI.getCustomers(),
+        (window as any).electronAPI.getSales()
+      ]);
+      const data = await loadVentasData(productsData, customersData, salesData);
       setProducts(data.products);
+      setCustomers(data.customers);
       setRecentSales(data.recentSales);
     } catch (e) {
       console.error('Error loading sales data:', e);
@@ -112,12 +130,61 @@ export const VentasPage: React.FC = () => {
 
   useEffect(() => {
     // Inicial rápido por localStorage para no bloquear UI
-    setDiscountMap(readDiscountMapFromLocal());
-    const localTax = readTaxRateFromLocal();
+    setDiscountMap(readDiscountMapFromLocal(localStorage.getItem('discountLevels')));
+    const localTax = readTaxRateFromLocal(localStorage.getItem('businessSettings'));
     setTaxRate(localTax);
     // Sincronizar desde settings
-    readTaxRateFromSettings(localTax).then(setTaxRate).catch(()=>{});
-    loadDiscountMapFromSettings().then(setDiscountMap).catch(()=>{});
+    const loadSettingsFromIPC = async () => {
+      if (!(window as any).electronAPI?.getSettings) return;
+      const rows = await (window as any).electronAPI.getSettings();
+      const tax = await readTaxRateFromSettings(rows, localTax);
+      setTaxRate(tax);
+      const settingsMap = new Map((rows || []).map((r: any) => [r.key, r.value] as const));
+      let levels: { Bronze?: number; Silver?: number; Gold?: number; Platinum?: number } | null = null;
+      const rawLevels =
+        settingsMap.get('discountLevels') ||
+        settingsMap.get('discount_levels') ||
+        settingsMap.get('customer_discount_levels');
+      if (rawLevels) {
+        try {
+          levels = JSON.parse(rawLevels);
+        } catch {
+          levels = null;
+        }
+      } else {
+        const fromKey = (key: string) => {
+          const value = settingsMap.get(key);
+          if (value === undefined) return undefined;
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+        levels = {
+          Bronze:
+            fromKey('discount_bronze') ??
+            fromKey('discount_level_bronze'),
+          Silver:
+            fromKey('discount_silver') ??
+            fromKey('discount_level_silver'),
+          Gold:
+            fromKey('discount_gold') ??
+            fromKey('discount_level_gold'),
+          Platinum:
+            fromKey('discount_platinum') ??
+            fromKey('discount_level_platinum'),
+        };
+        if (
+          levels.Bronze === undefined &&
+          levels.Silver === undefined &&
+          levels.Gold === undefined &&
+          levels.Platinum === undefined
+        ) {
+          levels = null;
+        }
+      }
+      const nextMap = await loadDiscountMapFromSettings(levels);
+      setDiscountMap(nextMap);
+    };
+    loadSettingsFromIPC().catch(() => {});
   }, []);
 
   // Productos → agregar al pedido
@@ -154,7 +221,24 @@ export const VentasPage: React.FC = () => {
     if (orderItems.length === 0 || isConfirming) return;
     setIsConfirming(true);
     try {
-      await confirmOrderSvc(orderItems, selectedCustomer, paymentMethod, { subtotal, discount, tax, total });
+      let requireCustomer = false;
+      try {
+        const sys = localStorage.getItem('systemSettings');
+        if (sys) {
+          const parsed = JSON.parse(sys);
+          requireCustomer = !!parsed.requireCustomerForSale;
+        }
+      } catch {}
+      const saleData = await confirmOrderSvc(
+        orderItems,
+        selectedCustomer,
+        paymentMethod,
+        { subtotal, discount, tax, total },
+        { requireCustomer }
+      );
+      if ((window as any).electronAPI?.createSale && saleData) {
+        await (window as any).electronAPI.createSale(saleData);
+      }
       setOrderItems([]);
       setSelectedCustomer(null);
       await loadData();
@@ -265,7 +349,7 @@ export const VentasPage: React.FC = () => {
         {/* Cliente */}
         <div style={{ marginBottom:16, padding:14, background:'#f8f9fc', borderRadius:12, border:'2px solid #e2e8f0' }}>
           <label style={{ display:'block', marginBottom:8, fontWeight:600, color:'#2d3748' }}>👤 Cliente</label>
-          <ClienteSelector onSelect={(c)=> setSelectedCustomer(c)} />
+          <ClienteSelector customers={customers} onSelect={(c)=> setSelectedCustomer(c)} />
           {selectedCustomer ? (
             <div style={{ marginTop:8, padding:'10px 12px', background:'linear-gradient(135deg, #4299e1, #3182ce)', borderRadius:8, color:'#fff', fontSize:13, textAlign:'center' }}>
               Cliente seleccionado: <strong>{selectedCustomer.name}</strong> · Nivel: {selectedCustomer.discountLevel} · Descuento: {Math.round((discountMap[selectedCustomer.discountLevel]||0)*100)}%
@@ -377,4 +461,3 @@ export const VentasPage: React.FC = () => {
     </div>
   );
 };
-
