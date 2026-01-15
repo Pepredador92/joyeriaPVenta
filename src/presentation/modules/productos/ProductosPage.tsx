@@ -34,6 +34,15 @@ export const ProductosPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (editingProduct) {
+        if (!(window as any).electronAPI?.updateProduct) {
+          alert('IPC no disponible');
+          return;
+        }
+      } else if (!(window as any).electronAPI?.createProduct) {
+        alert('IPC no disponible');
+        return;
+      }
       // Validar antes de enviar
       const v = validateProductoSvc(newProduct);
       if (!v.ok) {
@@ -41,18 +50,21 @@ export const ProductosPage: React.FC = () => {
         alert(first);
         return;
       }
+      const normalizedPayload = {
+        sku: (newProduct.sku || '').trim(),
+        name: (newProduct.name || '').trim(),
+        price: Number(newProduct.price) || 0,
+        stock: Number(newProduct.stock) || 0,
+        category: (newProduct.category || '').trim(),
+        description: newProduct.description?.trim() || undefined,
+        updatedAt: new Date().toISOString(),
+      };
       if (editingProduct) {
-        await (window as any).electronAPI.updateProduct(editingProduct.id, newProduct);
+        await (window as any).electronAPI.updateProduct(editingProduct.id, normalizedPayload);
       } else {
         const payload = {
-          sku: (newProduct.sku || '').trim(),
-          name: (newProduct.name || '').trim(),
-          price: Number(newProduct.price) || 0,
-          stock: Number(newProduct.stock) || 0,
-          category: (newProduct.category || '').trim(),
-          description: newProduct.description?.trim() || undefined,
+          ...normalizedPayload,
           createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
         };
         await (window as any).electronAPI.createProduct(payload);
       }
@@ -73,6 +85,10 @@ export const ProductosPage: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (confirm('¿Estás seguro de que quieres eliminar este producto?')) {
       try {
+        if (!(window as any).electronAPI?.deleteProduct) {
+          alert('IPC no disponible');
+          return;
+        }
         await (window as any).electronAPI.deleteProduct(id);
         loadProducts();
       } catch (error) {
