@@ -39,12 +39,21 @@ export const ClientesPage: React.FC = () => {
     setErrors(v.errors);
     if (!v.ok) return;
     try {
+      const normalizedPatch = {
+        ...form,
+        name: (form.name || '').trim(),
+        email: form.email?.trim() || undefined,
+        phone: form.phone?.trim() || undefined,
+        alternatePhone: form.alternatePhone?.trim() || undefined,
+        address: form.address?.trim() || undefined,
+        updatedAt: new Date().toISOString(),
+      };
       if (editingId) {
         if (!(window as any).electronAPI?.updateCustomer) {
           alert('IPC no disponible');
           return;
         }
-        await (window as any).electronAPI.updateCustomer(editingId, form);
+        await (window as any).electronAPI.updateCustomer(editingId, normalizedPatch);
         showToast('Cliente actualizado');
       } else {
         if (!(window as any).electronAPI?.createCustomer) {
