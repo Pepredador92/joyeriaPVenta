@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  loadInventario,
   filterInventario,
   registrarEntrada,
   registrarSalida,
@@ -27,8 +26,12 @@ export const InventarioPage: React.FC = () => {
   const reload = async () => {
     setLoading(true);
     try {
-      const list = await loadInventario();
-      setItems(list);
+      if (!(window as any).electronAPI?.getProducts) {
+        setItems([]);
+        return;
+      }
+      const list = await (window as any).electronAPI.getProducts();
+      setItems(list || []);
     } finally {
       setLoading(false);
     }
@@ -52,9 +55,16 @@ export const InventarioPage: React.FC = () => {
     setErrors(v.errors);
     if (!v.ok) return;
     try {
-      if (tipo === 'entrada') await registrarEntrada(mov);
-      else if (tipo === 'salida') await registrarSalida(mov);
-      else await ajustarStock(mov);
+      if (!(window as any).electronAPI?.updateProduct) {
+        alert('IPC no disponible');
+        return;
+      }
+      let result;
+      if (tipo === 'entrada') result = registrarEntrada(mov, p as any);
+      else if (tipo === 'salida') result = registrarSalida(mov, p as any);
+      else result = ajustarStock(mov, p as any);
+      await (window as any).electronAPI.updateProduct(result.productId, { stock: result.stock });
+      (window as any).electronAPI?.logInfo?.(result.logMessage);
       setToast('Movimiento aplicado');
       setTimeout(() => setToast(null), 1500);
       setCantidad(1); setNuevoStock(0); setRazon(''); setDocumento('');

@@ -22,13 +22,6 @@ export type InventarioUpdateInput = {
   documento?: string;
 };
 
-// Carga de inventario (productos con stock)
-export async function loadInventario(): Promise<InventarioItem[]> {
-  if (!(window as any).electronAPI?.getProducts) return [];
-  const list = (await (window as any).electronAPI.getProducts()) as Product[];
-  return list;
-}
-
 // Filtro por nombre, SKU o categoría
 export function filterInventario(items: InventarioItem[], term: string): InventarioItem[] {
   const q = (term || '').trim().toLowerCase();
@@ -59,10 +52,14 @@ export function validateInventarioMovimiento(mov: MovimientoInventario, product:
   return { ok: Object.keys(errors).length === 0, errors };
 }
 
+export type InventarioUpdateResult = {
+  productId: number;
+  stock: number;
+  logMessage: string;
+};
+
 // Registrar entrada: aumenta stock
-export async function registrarEntrada(mov: MovimientoInventario): Promise<Product | null> {
-  const products = await loadInventario();
-  const product = products.find((p) => p.id === mov.productId);
+export function registrarEntrada(mov: MovimientoInventario, product: Product | undefined): InventarioUpdateResult {
   const { ok, errors } = validateInventarioMovimiento(mov, product);
   if (!ok) {
     const err = new Error('VALIDATION_ERROR');
@@ -71,15 +68,15 @@ export async function registrarEntrada(mov: MovimientoInventario): Promise<Produ
   }
   const cant = Number(mov.cantidad || 0);
   const nuevo = (product!.stock ?? 0) + cant;
-  const updated = await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo });
-  (window as any).electronAPI?.logInfo?.(`inventario_entrada: product=${product!.id}, +${cant}, stock=${nuevo}${mov.documento ? ', doc=' + mov.documento : ''}`);
-  return updated;
+  return {
+    productId: product!.id,
+    stock: nuevo,
+    logMessage: `inventario_entrada: product=${product!.id}, +${cant}, stock=${nuevo}${mov.documento ? ', doc=' + mov.documento : ''}`,
+  };
 }
 
 // Registrar salida: disminuye stock (validar suficiente)
-export async function registrarSalida(mov: MovimientoInventario): Promise<Product | null> {
-  const products = await loadInventario();
-  const product = products.find((p) => p.id === mov.productId);
+export function registrarSalida(mov: MovimientoInventario, product: Product | undefined): InventarioUpdateResult {
   const { ok, errors } = validateInventarioMovimiento(mov, product);
   if (!ok) {
     const err = new Error('VALIDATION_ERROR');
@@ -88,15 +85,15 @@ export async function registrarSalida(mov: MovimientoInventario): Promise<Produc
   }
   const cant = Number(mov.cantidad || 0);
   const nuevo = Math.max(0, (product!.stock ?? 0) - cant);
-  const updated = await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo });
-  (window as any).electronAPI?.logInfo?.(`inventario_salida: product=${product!.id}, -${cant}, stock=${nuevo}${mov.documento ? ', doc=' + mov.documento : ''}`);
-  return updated;
+  return {
+    productId: product!.id,
+    stock: nuevo,
+    logMessage: `inventario_salida: product=${product!.id}, -${cant}, stock=${nuevo}${mov.documento ? ', doc=' + mov.documento : ''}`,
+  };
 }
 
 // Ajuste: fija stock manualmente con razon/documento
-export async function ajustarStock(mov: MovimientoInventario): Promise<Product | null> {
-  const products = await loadInventario();
-  const product = products.find((p) => p.id === mov.productId);
+export function ajustarStock(mov: MovimientoInventario, product: Product | undefined): InventarioUpdateResult {
   const { ok, errors } = validateInventarioMovimiento(mov, product);
   if (!ok) {
     const err = new Error('VALIDATION_ERROR');
@@ -104,7 +101,9 @@ export async function ajustarStock(mov: MovimientoInventario): Promise<Product |
     throw err;
   }
   const nuevo = Number(mov.nuevoStock);
-  const updated = await (window as any).electronAPI.updateProduct(product!.id, { stock: nuevo });
-  (window as any).electronAPI?.logInfo?.(`inventario_ajuste: product=${product!.id}, nuevo=${nuevo}${mov.razon ? ', razon=' + mov.razon : ''}${mov.documento ? ', doc=' + mov.documento : ''}`);
-  return updated;
+  return {
+    productId: product!.id,
+    stock: nuevo,
+    logMessage: `inventario_ajuste: product=${product!.id}, nuevo=${nuevo}${mov.razon ? ', razon=' + mov.razon : ''}${mov.documento ? ', doc=' + mov.documento : ''}`,
+  };
 }
