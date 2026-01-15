@@ -1,11 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
-  loadProductos as loadProductosSvc,
   filterProductos as filterProductosSvc,
   validateProducto as validateProductoSvc,
-  createProducto as createProductoSvc,
-  updateProducto as updateProductoSvc,
-  deleteProducto as deleteProductoSvc,
   getUniqueSKU,
 } from '../../../domain/productos/productosService';
 
@@ -24,8 +20,12 @@ export const ProductosPage: React.FC = () => {
 
   const loadProducts = async () => {
     try {
-      const data = await loadProductosSvc();
-      setProducts(data);
+      if (!(window as any).electronAPI?.getProducts) {
+        setProducts([]);
+        return;
+      }
+      const data = await (window as any).electronAPI.getProducts();
+      setProducts(data || []);
     } catch (error) {
       console.error('Error loading products:', error);
     }
@@ -42,9 +42,19 @@ export const ProductosPage: React.FC = () => {
         return;
       }
       if (editingProduct) {
-        await updateProductoSvc(editingProduct.id, newProduct);
+        await (window as any).electronAPI.updateProduct(editingProduct.id, newProduct);
       } else {
-        await createProductoSvc(newProduct as any);
+        const payload = {
+          sku: (newProduct.sku || '').trim(),
+          name: (newProduct.name || '').trim(),
+          price: Number(newProduct.price) || 0,
+          stock: Number(newProduct.stock) || 0,
+          category: (newProduct.category || '').trim(),
+          description: newProduct.description?.trim() || undefined,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await (window as any).electronAPI.createProduct(payload);
       }
       resetForm();
       loadProducts();
@@ -63,7 +73,7 @@ export const ProductosPage: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (confirm('¿Estás seguro de que quieres eliminar este producto?')) {
       try {
-        await deleteProductoSvc(id);
+        await (window as any).electronAPI.deleteProduct(id);
         loadProducts();
       } catch (error) {
         console.error('Error deleting product:', error);
