@@ -1,24 +1,34 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Configuracion,
+  // Generales
+  loadSettings as loadSettingsSvc,
+  updateSettings as updateSettingsSvc,
   validateSettings as validateSettingsSvc,
-  getDefaultSettings,
-  parseSettingsRows,
-  parseMonthlyGoal,
-  DiscountLevels,
-  CustomerLevelRules,
-  getDefaultDiscountLevels,
-  parseDiscountLevels,
-  normalizeDiscountLevels,
-  parseDashboardPassword,
-  getDefaultCustomerLevelRules,
-  parseCustomerLevelRules,
-  normalizeCustomerLevelRules,
-  computeCustomerDiscountLevel,
-  getSalesRangeForDay,
-  getSalesRangeForWeek,
-  getSalesRangeForMonth,
-  filterSalesByRange,
+  Configuracion,
+  // Dashboard
+  getMonthlyGoal as getMonthlyGoalSvc,
+  setMonthlyGoal as setMonthlyGoalSvc,
+  // Descuentos por nivel
+  getDiscountLevels as getDiscountLevelsSvc,
+  setDiscountLevels as setDiscountLevelsSvc,
+  // Ventas del día
+  getTodaySales as getTodaySalesSvc,
+  updateSale as updateSaleSvc,
+  deleteSale as deleteSaleSvc,
+  // Ventas históricas
+  getSalesByDay as getSalesByDaySvc,
+  getSalesByWeek as getSalesByWeekSvc,
+  getSalesByMonth as getSalesByMonthSvc,
+  getAllSales as getAllSalesSvc,
+  // Administración avanzada
+  deleteAllSales as deleteAllSalesSvc,
+  deleteAllCustomers as deleteAllCustomersSvc,
+  // Clientes
+  updateCustomerLevels as updateCustomerLevelsSvc,
+  getCustomerLevelRules as getCustomerLevelRulesSvc,
+  setCustomerLevelRules as setCustomerLevelRulesSvc,
+  getDashboardPassword as getDashboardPasswordSvc,
+  setDashboardPassword as setDashboardPasswordSvc
 } from '../../../domain/configuracion/configuracionService';
 import { Sale, DEFAULT_ADMIN_PASSWORD, MASTER_ADMIN_PASSWORD } from '../../../shared/types';
 
@@ -74,19 +84,17 @@ export const ConfiguracionPage: React.FC = () => {
   const load = async () => {
     setLoading(true);
     try {
-      const api = (window as any).electronAPI;
-      const rows = api?.getSettings ? await api.getSettings() : [];
-      const settings = rows?.length ? parseSettingsRows(rows) : getDefaultSettings();
-      setForm(settings);
-      const map = new Map((rows || []).map((r: any) => [r.key, r.value] as const));
-      setMonthlyGoal(parseMonthlyGoal(map.get('monthly_goal')));
-      const rawDiscounts = map.get('discountLevels') || map.get('discount_levels');
-      setDisc(parseDiscountLevels(rawDiscounts) || getDefaultDiscountLevels());
-      setRules(parseCustomerLevelRules(map.get('customerLevelRules')));
-      const fromSettings = parseDashboardPassword(map.get('dashboardPassword'));
-      let fromLocal: string | null = null;
-      try { fromLocal = parseDashboardPassword(localStorage.getItem('dashboardPassword')); } catch {}
-      const adminPwd = fromSettings || fromLocal || DEFAULT_ADMIN_PASSWORD;
+      const [s, goal, dlevels, rl, adminPwd] = await Promise.all([
+        loadSettingsSvc(),
+        getMonthlyGoalSvc(),
+        getDiscountLevelsSvc(),
+        getCustomerLevelRulesSvc(),
+        getDashboardPasswordSvc()
+      ]);
+      setForm(s);
+      setMonthlyGoal(goal || 0);
+      setDisc(dlevels);
+      setRules(rl);
       setResolvedAdminPassword(adminPwd);
       setHasCustomAdminPassword((adminPwd || '').trim() !== DEFAULT_ADMIN_PASSWORD);
     } finally {
@@ -96,23 +104,6 @@ export const ConfiguracionPage: React.FC = () => {
 
   useEffect(() => { load(); }, []);
 
-  const loadDiscountLevelsFromSettings = async (): Promise<DiscountLevels> => {
-    const api = (window as any).electronAPI;
-    if (!api?.getSettings) return getDefaultDiscountLevels();
-    const rows = await api.getSettings();
-    const map = new Map((rows || []).map((r: any) => [r.key, r.value] as const));
-    const raw = map.get('discountLevels') || map.get('discount_levels');
-    return parseDiscountLevels(raw) || getDefaultDiscountLevels();
-  };
-
-  const loadCustomerLevelRulesFromSettings = async (): Promise<CustomerLevelRules> => {
-    const api = (window as any).electronAPI;
-    if (!api?.getSettings) return getDefaultCustomerLevelRules();
-    const rows = await api.getSettings();
-    const map = new Map((rows || []).map((r: any) => [r.key, r.value] as const));
-    return parseCustomerLevelRules(map.get('customerLevelRules'));
-  };
-
   const onSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const v = validateSettingsSvc(form);
@@ -120,15 +111,7 @@ export const ConfiguracionPage: React.FC = () => {
     if (!v.ok) return;
     setSaving(true);
     try {
-      const api = (window as any).electronAPI;
-      if (!api?.updateSetting) {
-        alert('IPC no disponible');
-        return;
-      }
-      await api.updateSetting('tax_rate', String(form.iva / 100));
-      await api.updateSetting('currency', form.moneda);
-      await api.updateSetting('theme', form.tema);
-      await api.updateSetting('discount_levels', JSON.stringify(form.nivelesDescuento || {}));
+      await updateSettingsSvc(form);
       setToast('Cambios guardados');
       setTimeout(() => setToast(null), 1500);
       // sincroniza modo nocturno en localStorage para UI si aplica
@@ -150,80 +133,27 @@ export const ConfiguracionPage: React.FC = () => {
 
   const reloadTodaySales = async () => {
     setLoadingSales(true);
-    try {
-      const api = (window as any).electronAPI;
-      if (!api?.getSales) {
-        setTodaySales([]);
-        return;
-      }
-      const all: Sale[] = (await api.getSales()) || [];
-      const today = new Date().toDateString();
-      setTodaySales(all.filter(s => new Date(s.createdAt).toDateString() === today));
-    } finally { setLoadingSales(false); }
+    try { setTodaySales(await getTodaySalesSvc()); } finally { setLoadingSales(false); }
   };
 
   const onSaveGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingGoal(true);
-    try {
-      const api = (window as any).electronAPI;
-      if (!api?.updateSetting) {
-        alert('IPC no disponible');
-        return;
-      }
-      const v = Math.max(0, Number(monthlyGoal) || 0);
-      await api.updateSetting('monthly_goal', String(v));
-      setToast('Meta mensual guardada');
-      setTimeout(() => setToast(null), 1200);
-    }
+    try { await setMonthlyGoalSvc(monthlyGoal); setToast('Meta mensual guardada'); setTimeout(() => setToast(null), 1200); }
     finally { setSavingGoal(false); }
   };
 
   const onSaveDiscounts = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingDisc(true);
-    try {
-      const api = (window as any).electronAPI;
-      if (!api?.updateSetting) {
-        alert('IPC no disponible');
-        return;
-      }
-      const clean = normalizeDiscountLevels(disc);
-      await api.updateSetting('discountLevels', JSON.stringify(clean));
-      await api.updateSetting('discount_levels', JSON.stringify(clean));
-      try { localStorage.setItem('discountLevels', JSON.stringify(clean)); } catch {}
-      setDisc(clean);
-      setToast('Descuentos guardados');
-      setTimeout(() => setToast(null), 1200);
-    }
+    try { await setDiscountLevelsSvc(disc); setToast('Descuentos guardados'); setTimeout(() => setToast(null), 1200); }
     finally { setSavingDisc(false); }
   };
 
   const onUpdateCustomerLevels = async () => {
     setUpdatingLevels(true); setLevelsResult(null);
     try {
-      const api = (window as any).electronAPI;
-      if (!api?.getCustomers || !api?.getSales || !api?.updateCustomer) {
-        alert('IPC no disponible');
-        return;
-      }
-      const [customers, sales] = await Promise.all([
-        api.getCustomers(),
-        api.getSales()
-      ]);
-      let updated = 0;
-      const now = new Date();
-      await Promise.all((customers || []).map(async (c: any) => {
-        try {
-          const mapped = computeCustomerDiscountLevel(c, sales || [], rules, now);
-          if (c.discountLevel !== mapped) {
-            await api.updateCustomer(c.id, { discountLevel: mapped });
-            updated += 1;
-          }
-        } catch {}
-      }));
-      const examined = (customers || []).length;
-      const res = { updated, examined };
+      const res = await updateCustomerLevelsSvc();
       setLevelsResult(res);
       setToast(`Niveles actualizados: ${res.updated}/${res.examined}`);
       setTimeout(() => setToast(null), 1500);
@@ -231,12 +161,7 @@ export const ConfiguracionPage: React.FC = () => {
   };
 
   const onEditSaleStatus = async (s: Sale, nextStatus: Sale['status']) => {
-    const api = (window as any).electronAPI;
-    if (!api?.updateSale) {
-      alert('IPC no disponible');
-      return;
-    }
-    const res = await api.updateSale(s.id, { status: nextStatus });
+    const res = await updateSaleSvc(s.id, { status: nextStatus });
     if (res) {
       setToast('Venta actualizada'); setTimeout(() => setToast(null), 1000);
       reloadTodaySales();
@@ -247,25 +172,10 @@ export const ConfiguracionPage: React.FC = () => {
     setLoadingHistoric(true);
     try {
       let data: Sale[] = [];
-      const api = (window as any).electronAPI;
-      if (!api?.getSales) {
-        setHistoricSales([]);
-        return;
-      }
-      if (histMode === 'todas') {
-        data = await api.getSales();
-      } else {
-        let range;
-        if (histMode === 'dia') range = getSalesRangeForDay(histDay);
-        else if (histMode === 'semana') range = getSalesRangeForWeek(histWeekStart);
-        else range = getSalesRangeForMonth(histMonth);
-        if (api.getSalesByRange) {
-          data = await api.getSalesByRange(range.start.toISOString(), range.end.toISOString());
-        } else {
-          const all = await api.getSales();
-          data = filterSalesByRange(all || [], range.start, range.end);
-        }
-      }
+      if (histMode === 'todas') data = await getAllSalesSvc();
+      else if (histMode === 'dia') data = await getSalesByDaySvc(histDay);
+      else if (histMode === 'semana') data = await getSalesByWeekSvc(histWeekStart);
+      else if (histMode === 'mes') data = await getSalesByMonthSvc(histMonth);
       setHistoricSales(data);
     } finally { setLoadingHistoric(false); }
   };
@@ -275,12 +185,7 @@ export const ConfiguracionPage: React.FC = () => {
 
   const onDeleteSale = async (s: Sale) => {
     if (!confirm(`¿Eliminar venta #${s.id}?`)) return;
-    const api = (window as any).electronAPI;
-    if (!api?.deleteSale) {
-      alert('IPC no disponible');
-      return;
-    }
-    const ok = await api.deleteSale(s.id);
+    const ok = await deleteSaleSvc(s.id);
     if (ok) { setToast('Venta eliminada'); setTimeout(() => setToast(null), 1000); reloadTodaySales(); }
   };
 
@@ -316,14 +221,7 @@ export const ConfiguracionPage: React.FC = () => {
     }
     setSavingAdminPassword(true);
     try {
-      const api = (window as any).electronAPI;
-      if (!api?.updateSetting) {
-        alert('IPC no disponible');
-        return;
-      }
-      const clean = next.trim();
-      await api.updateSetting('dashboardPassword', clean);
-      try { localStorage.setItem('dashboardPassword', clean); } catch {}
+      await setDashboardPasswordSvc(next);
       setResolvedAdminPassword(next);
       setHasCustomAdminPassword(next !== DEFAULT_ADMIN_PASSWORD);
       setPwdCurrent('');
@@ -469,30 +367,10 @@ export const ConfiguracionPage: React.FC = () => {
                 </div>
               </div>
               <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setSavingRules(true);
-                    try {
-                      const api = (window as any).electronAPI;
-                      if (!api?.updateSetting) {
-                        alert('IPC no disponible');
-                        return;
-                      }
-                      const clean = normalizeCustomerLevelRules(rules);
-                      await api.updateSetting('customerLevelRules', JSON.stringify(clean));
-                      setRules(clean);
-                      setToast('Reglas guardadas');
-                      setTimeout(() => setToast(null), 1200);
-                    } finally {
-                      setSavingRules(false);
-                    }
-                  }}
-                  disabled={savingRules}
-                >
+                <button type="button" onClick={async ()=> { setSavingRules(true); try { await setCustomerLevelRulesSvc(rules); setToast('Reglas guardadas'); setTimeout(()=> setToast(null), 1200); } finally { setSavingRules(false); } }} disabled={savingRules}>
                   {savingRules ? 'Guardando…' : 'Guardar reglas de nivelación'}
                 </button>
-                <button type="button" onClick={async ()=> setRules(await loadCustomerLevelRulesFromSettings())}>Restaurar</button>
+                <button type="button" onClick={async ()=> setRules(await getCustomerLevelRulesSvc())}>Restaurar</button>
               </div>
             </div>
           )}
@@ -554,7 +432,7 @@ export const ConfiguracionPage: React.FC = () => {
               </div>
               <div style={{ marginTop: 10 }}>
                 <button type="submit" disabled={savingDisc}>{savingDisc ? 'Guardando…' : 'Guardar cambios'}</button>
-                <button type="button" onClick={async () => setDisc(await loadDiscountLevelsFromSettings())} style={{ marginLeft: 8 }}>Restaurar</button>
+                <button type="button" onClick={async () => setDisc(await getDiscountLevelsSvc())} style={{ marginLeft: 8 }}>Restaurar</button>
               </div>
             </form>
           )}
@@ -633,23 +511,13 @@ export const ConfiguracionPage: React.FC = () => {
                 <button type="button" style={{ background:'#d32f2f', color:'#fff', border:'none', padding:'8px 12px', borderRadius:6 }}
                   onClick={async ()=>{
                     if (!confirm('¿Eliminar TODAS las ventas? Esta acción no se puede deshacer.')) return;
-                    const api = (window as any).electronAPI;
-                    if (!api?.deleteAllSales) {
-                      alert('IPC no disponible');
-                      return;
-                    }
-                    const ok = await api.deleteAllSales();
+                    const ok = await deleteAllSalesSvc();
                     if (ok) { setToast('Todas las ventas eliminadas'); setTimeout(()=> setToast(null), 1200); }
                   }}>Eliminar todas las ventas</button>
                 <button type="button" style={{ background:'#f57c00', color:'#fff', border:'none', padding:'8px 12px', borderRadius:6 }}
                   onClick={async ()=>{
                     if (!confirm('¿Eliminar TODOS los clientes? Esta acción no se puede deshacer.')) return;
-                    const api = (window as any).electronAPI;
-                    if (!api?.deleteAllCustomers) {
-                      alert('IPC no disponible');
-                      return;
-                    }
-                    const ok = await api.deleteAllCustomers();
+                    const ok = await deleteAllCustomersSvc();
                     if (ok) { setToast('Todos los clientes eliminados'); setTimeout(()=> setToast(null), 1200); }
                   }}>Eliminar todos los clientes</button>
               </div>
