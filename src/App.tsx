@@ -1241,6 +1241,8 @@ const Reports = () => {
   const [sales, setSales] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [cashSessions, setCashSessions] = useState<any[]>([]);
+  const [selectedCashSessionId, setSelectedCashSessionId] = useState<number | 'all'>('all');
   const [activeTab, setActiveTab] = useState('general');
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<string|null>(null);
@@ -1273,11 +1275,16 @@ const Reports = () => {
         const tab = map['reports_active_tab'];
         const pQuery = map['reports_product_query'];
         const cQuery = map['reports_customer_query'];
+        const cashSessionRaw = map['reports_cash_session_id'];
         if (start && end) setDateRange({ startDate: start, endDate: end });
         if (method) setPaymentFilter(method);
         if (tab) setActiveTab(tab);
         if (typeof pQuery === 'string') setProductQuery(pQuery);
         if (typeof cQuery === 'string') setCustomerQuery(cQuery);
+        if (cashSessionRaw !== undefined) {
+          const parsed = Number(cashSessionRaw);
+          setSelectedCashSessionId(Number.isFinite(parsed) ? parsed : 'all');
+        }
         // Mirror to localStorage
         try {
           const current = JSON.parse(localStorage.getItem('reportsSettings')||'{}');
@@ -1288,7 +1295,8 @@ const Reports = () => {
             paymentFilter: method ?? current.paymentFilter,
             activeTab: tab ?? current.activeTab,
             productQuery: typeof pQuery==='string'?pQuery:current.productQuery,
-            customerQuery: typeof cQuery==='string'?cQuery:current.customerQuery
+            customerQuery: typeof cQuery==='string'?cQuery:current.customerQuery,
+            cashSessionId: cashSessionRaw ?? current.cashSessionId
           }));
         } catch {}
         return;
@@ -1304,6 +1312,7 @@ const Reports = () => {
         if (v.activeTab) setActiveTab(v.activeTab);
         if (typeof v.productQuery==='string') setProductQuery(v.productQuery);
         if (typeof v.customerQuery==='string') setCustomerQuery(v.customerQuery);
+        if (v.cashSessionId !== undefined) setSelectedCashSessionId(v.cashSessionId);
       }
     } catch {}
   };
@@ -1331,6 +1340,17 @@ const Reports = () => {
         setSales(salesData);
         setProducts(productsData);
         setCustomers(customersData);
+      }
+      if (window.electronAPI?.getCashSessions) {
+        try {
+          const sessions = await window.electronAPI.getCashSessions();
+          setCashSessions(sessions || []);
+        } catch (error) {
+          console.error('Error loading cash sessions:', error);
+          setCashSessions([]);
+        }
+      } else {
+        setCashSessions([]);
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -1398,6 +1418,7 @@ const Reports = () => {
     const today = new Date().toISOString().slice(0, 10);
     setDateRange({ startDate: today, endDate: today });
     setQuickRange('hoy');
+    setSelectedCashSessionId('all');
     setPaymentFilter('Todos');
     setActiveTab('general');
     setProductQuery('');
@@ -1435,6 +1456,23 @@ const Reports = () => {
     return ()=> clearTimeout(t);
   }, [customerQuery]);
 
+  useEffect(()=>{
+    persistReportsLS({ cashSessionId: selectedCashSessionId });
+    persistReportSetting('reports_cash_session_id', String(selectedCashSessionId));
+  }, [selectedCashSessionId]);
+
+  useEffect(() => {
+    if (selectedCashSessionId === 'all') return;
+    const session = cashSessions.find(s => s.id === selectedCashSessionId);
+    if (!session) {
+      setSelectedCashSessionId('all');
+      return;
+    }
+    const start = new Date(session.startTime).toISOString().slice(0, 10);
+    const end = session.endTime ? new Date(session.endTime).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+    setDateRange({ startDate: start, endDate: end });
+  }, [selectedCashSessionId, cashSessions]);
+
   const exportSalesCSV = () => {
     if (isInvalidRange) {
       showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
@@ -1456,7 +1494,8 @@ const Reports = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `reporte_ventas_${dateRange.startDate}_a_${dateRange.endDate}.csv`;
+    const sessionSuffix = selectedCashSessionId !== 'all' ? `_session_${selectedCashSessionId}` : '';
+    a.download = `reporte_ventas_${dateRange.startDate}_a_${dateRange.endDate}${sessionSuffix}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     showToast('CSV generado');
@@ -1491,11 +1530,13 @@ const Reports = () => {
     }
     const s = stats;
     const byMethod = filteredSales.reduce((acc:any, v:any)=> { const m = v.paymentMethod||'Otro'; acc[m]=(acc[m]||0)+(v.total||0); return acc; }, {});
+    const sessionLine = selectedCashSessionId !== 'all' ? `<div class="row"><b>Sesión de caja:</b> #${selectedCashSessionId}</div>` : '';
     const html = `
       <html><head><title>Reporte</title>
       <style>body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding:16px} h2{margin:0 0 8px} .row{margin:4px 0}</style>
       </head><body>
       <h2>Reporte de Ventas</h2>
+      ${sessionLine}
       <div class="row"><b>Periodo:</b> ${dateRange.startDate} a ${dateRange.endDate}</div>
       <div class="row"><b>Ventas Totales:</b> $${s.totalSales.toFixed(2)} (${s.totalTransactions} transacciones)</div>
       <div class="row"><b>Promedio:</b> $${s.avgSale.toFixed(2)} | <b>Descuentos:</b> $${s.totalDiscount.toFixed(2)} | <b>Impuestos:</b> $${s.totalTax.toFixed(2)}</div>
@@ -1816,6 +1857,13 @@ const Reports = () => {
   );
 
   // UI principal de Reportes con tabs
+  const canUseCashSessions = !!window.electronAPI?.getCashSessions;
+  const formatSessionLabel = (session: any) => {
+    const start = new Date(session.startTime).toLocaleString('es-MX');
+    const end = session.endTime ? new Date(session.endTime).toLocaleString('es-MX') : 'Abierta';
+    return `#${session.id} · ${start} → ${end}`;
+  };
+
   return (
     <div style={{ padding: 20 }}>
       <h1>📈 Reportes</h1>
@@ -1835,12 +1883,37 @@ const Reports = () => {
         <button onClick={()=> setQuickRange('7d')}>7 días</button>
         <button onClick={()=> setQuickRange('30d')}>30 días</button>
         <button onClick={()=> setQuickRange('mes')}>Este mes</button>
+        <label style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span>Sesión de caja</span>
+          <select
+            value={selectedCashSessionId}
+            onChange={(e) => {
+              if (!canUseCashSessions) {
+                showToast('IPC no disponible');
+                return;
+              }
+              const next = e.target.value === 'all' ? 'all' : Number(e.target.value);
+              setSelectedCashSessionId(Number.isFinite(next as number) ? (next as number) : 'all');
+            }}
+            disabled={!canUseCashSessions}
+          >
+            <option value="all">Todas</option>
+            {cashSessions.map((session:any) => (
+              <option key={session.id} value={session.id}>{formatSessionLabel(session)}</option>
+            ))}
+          </select>
+        </label>
         <button onClick={clearFilters}>Limpiar filtros</button>
         <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
           <button onClick={exportSalesCSV} disabled={isLoading || isInvalidRange}>Exportar ventas</button>
           <button onClick={printReport} disabled={isLoading || isInvalidRange}>Imprimir</button>
         </div>
       </div>
+      {selectedCashSessionId !== 'all' && (
+        <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
+          Filtrando por sesión #{selectedCashSessionId}
+        </div>
+      )}
       {isLoading && <div style={{ marginBottom: 12, color: '#666' }}>Cargando…</div>}
       {/* Tabs */}
       <div style={{ display:'flex', gap:6, marginBottom:0 }}>
