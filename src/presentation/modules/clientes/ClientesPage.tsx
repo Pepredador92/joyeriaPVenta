@@ -1,10 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  loadCustomers,
   filterCustomers,
-  createCustomer as createCustomerSvc,
-  updateCustomer as updateCustomerSvc,
-  deleteCustomer as deleteCustomerSvc,
   validateCustomer,
 } from '../../../domain/clientes/clientesService';
 
@@ -22,8 +18,12 @@ export const ClientesPage: React.FC = () => {
   const reload = async () => {
     setLoading(true);
     try {
-      const list = await loadCustomers();
-      setCustomers(list);
+      if (!(window as any).electronAPI?.getCustomers) {
+        setCustomers([]);
+        return;
+      }
+      const list = await (window as any).electronAPI.getCustomers();
+      setCustomers(list || []);
     } finally {
       setLoading(false);
     }
@@ -39,11 +39,50 @@ export const ClientesPage: React.FC = () => {
     setErrors(v.errors);
     if (!v.ok) return;
     try {
+      const normalizedPatch = {
+        ...form,
+        name: (form.name || '').trim(),
+        email: form.email?.trim() || undefined,
+        phone: form.phone?.trim() || undefined,
+        alternatePhone: form.alternatePhone?.trim() || undefined,
+        address: form.address?.trim() || undefined,
+        updatedAt: new Date().toISOString(),
+      };
       if (editingId) {
-        await updateCustomerSvc(editingId, form);
+        if (!(window as any).electronAPI?.updateCustomer) {
+          alert('IPC no disponible');
+          return;
+        }
+        await (window as any).electronAPI.updateCustomer(editingId, normalizedPatch);
         showToast('Cliente actualizado');
       } else {
-        await createCustomerSvc(form);
+        if (!(window as any).electronAPI?.createCustomer) {
+          alert('IPC no disponible');
+          return;
+        }
+        const payload = {
+          name: (form.name || '').trim(),
+          email: form.email?.trim() || undefined,
+          phone: form.phone?.trim() || undefined,
+          alternatePhone: form.alternatePhone?.trim() || undefined,
+          address: form.address?.trim() || undefined,
+          discountLevel: form.discountLevel || 'Bronze',
+          birthDate: form.birthDate,
+          gender: form.gender,
+          occupation: form.occupation,
+          customerType: form.customerType || 'Particular',
+          referredBy: form.referredBy,
+          preferredContact: form.preferredContact,
+          preferredCategories: form.preferredCategories,
+          budgetRange: form.budgetRange,
+          specialOccasions: form.specialOccasions,
+          notes: form.notes,
+          tags: form.tags,
+          isActive: form.isActive ?? true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await (window as any).electronAPI.createCustomer(payload);
         showToast('Cliente creado');
       }
       setForm({ name: '', email: '', phone: '', discountLevel: 'Bronze', customerType: 'Particular' });
@@ -69,9 +108,19 @@ export const ClientesPage: React.FC = () => {
 
   const onDelete = async (id: number) => {
     if (!confirm('¿Eliminar cliente?')) return;
-    await deleteCustomerSvc(id);
+    if (!(window as any).electronAPI?.deleteCustomer) {
+      alert('IPC no disponible');
+      return;
+    }
+    await (window as any).electronAPI.deleteCustomer(id);
     showToast('Cliente eliminado');
     await reload();
+  };
+
+  const getWhatsAppLink = (phone?: string) => {
+    const digits = (phone || '').replace(/\D+/g, '');
+    if (!digits) return '';
+    return `https://wa.me/${digits.startsWith('52') ? digits : `52${digits}`}`;
   };
 
   return (
@@ -148,6 +197,26 @@ export const ClientesPage: React.FC = () => {
                 <td style={{ padding:8 }}>{c.discountLevel}</td>
                 <td style={{ padding:8 }}>{c.customerType||'Particular'}</td>
                 <td style={{ padding:8, textAlign:'center' }}>
+                  {getWhatsAppLink(c.phone) && (
+                    <a
+                      href={getWhatsAppLink(c.phone)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        marginRight:8,
+                        padding:'6px 10px',
+                        border:'1px solid #25D366',
+                        background:'#fff',
+                        color:'#25D366',
+                        borderRadius:6,
+                        textDecoration:'none',
+                        fontSize:12,
+                        fontWeight:'bold'
+                      }}
+                    >
+                      WhatsApp
+                    </a>
+                  )}
                   <button onClick={()=> onEdit(c)} style={{ marginRight:8 }}>Editar</button>
                   <button onClick={()=> onDelete(c.id)}>Eliminar</button>
                 </td>

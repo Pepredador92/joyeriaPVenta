@@ -227,9 +227,16 @@ class DatabaseService {
   }
 
   async createCashSession(sessionData: Omit<CashSession, 'id' | 'createdAt' | 'updatedAt'>): Promise<CashSession> {
+    const hasOpenSession = this.cashSessions.some(s => s.status === 'Abierta');
+    if (hasOpenSession) {
+      throw new Error('CASH_SESSION_ALREADY_OPEN');
+    }
     const newSession: CashSession = {
       id: Math.max(...this.cashSessions.map(s => s.id), 0) + 1,
       ...sessionData,
+      movements: [],
+      cashCount: {},
+      cashCountTotal: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -240,11 +247,28 @@ class DatabaseService {
 
   async updateCashSession(id: number, sessionData: Partial<CashSession>): Promise<CashSession | null> {
     const index = this.cashSessions.findIndex(s => s.id === id);
-    if (index === -1) return null;
+    if (index === -1) {
+      throw new Error('CASH_SESSION_NOT_FOUND');
+    }
+    const existing = this.cashSessions[index];
+    const attemptingClose = sessionData.status === 'Cerrada' || !!sessionData.endTime || sessionData.finalAmount !== undefined;
+    if (existing.status === 'Cerrada' && attemptingClose) {
+      throw new Error('CASH_SESSION_ALREADY_CLOSED');
+    }
+    const nextData = { ...sessionData } as Partial<CashSession>;
+    if (nextData.movements === undefined) {
+      delete nextData.movements;
+    }
+    if (nextData.cashCount === undefined) {
+      delete nextData.cashCount;
+    }
+    if (nextData.cashCountTotal === undefined) {
+      delete nextData.cashCountTotal;
+    }
     
     this.cashSessions[index] = {
-      ...this.cashSessions[index],
-      ...sessionData,
+      ...existing,
+      ...nextData,
       updatedAt: new Date().toISOString()
     };
   await this.saveCashSessionsToDiskSafe();

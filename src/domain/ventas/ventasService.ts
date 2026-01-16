@@ -1,6 +1,5 @@
 // Domain service for Ventas business rules
-// This module is UI-agnostic and contains pure functions plus thin IPC calls
-import { getDiscountLevels as getDiscountLevelsCfg } from '../configuracion/configuracionService';
+// This module is UI-agnostic and contains pure functions
 
 export type PaymentMethod = 'Efectivo' | 'Tarjeta' | 'Transferencia';
 
@@ -31,35 +30,30 @@ export type VentasData = {
   recentSales: any[];
 };
 
-export function getInitialPaymentMethod(): PaymentMethod {
-  try {
-    const sys = localStorage.getItem('systemSettings');
-    if (sys) {
-      const parsed = JSON.parse(sys);
-      if (parsed.defaultPaymentMethod) return parsed.defaultPaymentMethod as PaymentMethod;
-    }
-  } catch {}
-  return 'Efectivo';
+export function getInitialPaymentMethod(
+  systemSettings?: { defaultPaymentMethod?: PaymentMethod } | null,
+  fallback: PaymentMethod = 'Efectivo'
+): PaymentMethod {
+  if (systemSettings?.defaultPaymentMethod) {
+    return systemSettings.defaultPaymentMethod;
+  }
+  return fallback;
 }
 
-export async function loadVentasData(): Promise<VentasData> {
-  if (!(window as any).electronAPI) return { products: [], customers: [], recentSales: [] };
-  const [productsData, customersData, salesData] = await Promise.all([
-    (window as any).electronAPI.getProducts(),
-    (window as any).electronAPI.getCustomers(),
-    (window as any).electronAPI.getSales()
-  ]);
-  const recentSales = [...salesData]
+export async function loadVentasData(products: any[], customers: any[], sales: any[]): Promise<VentasData> {
+  const recentSales = [...sales]
     .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 10);
-  return { products: productsData, customers: customersData, recentSales };
+  return { products, customers, recentSales };
 }
 
-export function readDiscountMapFromLocal(defaults: DiscountMap = { Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 }): DiscountMap {
+export function readDiscountMapFromLocal(
+  raw: string | null,
+  defaults: DiscountMap = { Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 }
+): DiscountMap {
   try {
-    const dl = localStorage.getItem('discountLevels');
-    if (dl) {
-      const parsed = JSON.parse(dl as string);
+    if (raw) {
+      const parsed = JSON.parse(raw as string);
       return {
         Bronze: (parsed.Bronze ?? 0) / 100,
         Silver: (parsed.Silver ?? 5) / 100,
@@ -72,39 +66,40 @@ export function readDiscountMapFromLocal(defaults: DiscountMap = { Bronze: 0, Si
 }
 
 // Cargar mapa de descuentos desde Configuración (porcentaje → fracción)
-export async function loadDiscountMapFromSettings(): Promise<DiscountMap> {
+export async function loadDiscountMapFromSettings(
+  levels: { Bronze?: number; Silver?: number; Gold?: number; Platinum?: number } | null
+): Promise<DiscountMap> {
   try {
-    const levels = await getDiscountLevelsCfg();
+    if (!levels) return { Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 };
     return {
       Bronze: (levels.Bronze ?? 0) / 100,
       Silver: (levels.Silver ?? 5) / 100,
-      Gold: (levels.Gold ?? 10) / 100,
-      Platinum: (levels.Platinum ?? 15) / 100,
+      Gold: (levels.Gold ?? 8) / 100,
+      Platinum: (levels.Platinum ?? 12) / 100,
     };
   } catch {
-    return { Bronze: 0, Silver: 0.05, Gold: 0.10, Platinum: 0.15 };
+    return { Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 };
   }
 }
 
-export function readTaxRateFromLocal(defaultRate = 0.16): number {
+export function readTaxRateFromLocal(raw: string | null, defaultRate = 0.16): number {
   try {
-    const bs = localStorage.getItem('businessSettings');
-    if (bs) {
-      const parsed = JSON.parse(bs as string);
+    if (raw) {
+      const parsed = JSON.parse(raw as string);
       if (typeof parsed.taxRate === 'number') return (parsed.taxRate || 16) / 100;
     }
   } catch {}
   return defaultRate;
 }
 
-export async function readTaxRateFromSettings(current: number): Promise<number> {
+export async function readTaxRateFromSettings(
+  rows: Array<{ key: string; value: string }> | null,
+  current: number
+): Promise<number> {
   try {
-    if ((window as any).electronAPI?.getSettings) {
-      const rows = await (window as any).electronAPI.getSettings();
-      const tax = rows?.find((r: any) => r.key === 'tax_rate');
-      if (tax && !Number.isNaN(parseFloat(tax.value))) {
-        return parseFloat(tax.value); // already as 0.16
-      }
+    const tax = rows?.find((r) => r.key === 'tax_rate');
+    if (tax && !Number.isNaN(parseFloat(tax.value))) {
+      return parseFloat(tax.value); // already as 0.16
     }
   } catch {}
   return current;
@@ -188,19 +183,13 @@ export async function confirmOrder(
   items: OrderItem[],
   selectedCustomer: any,
   paymentMethod: PaymentMethod,
-  totals: { subtotal: number; discount: number; tax: number; total: number }
-): Promise<void> {
+  totals: { subtotal: number; discount: number; tax: number; total: number },
+  options?: { requireCustomer?: boolean }
+): Promise<any> {
   if (items.length === 0) return;
-  // Require customer if configured
-  try {
-    const sys = localStorage.getItem('systemSettings');
-    if (sys) {
-      const parsed = JSON.parse(sys);
-      if (parsed.requireCustomerForSale && !selectedCustomer) {
-        throw new Error('REQUIRE_CUSTOMER');
-      }
-    }
-  } catch {}
+  if (options?.requireCustomer && !selectedCustomer) {
+    throw new Error('REQUIRE_CUSTOMER');
+  }
 
   const saleItems = items.map((i) => ({
     productId: i.type === 'product' ? i.productId || 0 : 0,
@@ -227,5 +216,5 @@ export async function confirmOrder(
   appliedDiscountPercent: +( (totals.subtotal > 0 ? (totals.discount / totals.subtotal) : 0) * 100 ).toFixed(2),
   } as any;
 
-  await (window as any).electronAPI.createSale(saleData);
+  return saleData;
 }

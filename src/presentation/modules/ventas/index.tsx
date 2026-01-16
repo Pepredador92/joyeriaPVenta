@@ -21,24 +21,13 @@ import {
 } from '../../../domain/ventas/ventasService';
 import { searchCustomers } from '../../../domain/clientes/clientesService';
 
-const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) => {
+const ClienteSelector: React.FC<{ customers: any[]; onSelect: (c: any)=>void }> = ({ customers, onSelect }) => {
   const [q, setQ] = useState('');
-  const [list, setList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  useEffect(()=>{
-    let cancel = false;
-    const run = async () => {
-      const term = q.trim();
-      if (term.length < 2) { setList([]); return; }
-      setLoading(true);
-      try {
-        const res = await searchCustomers(term);
-        if (!cancel) setList(res);
-      } finally { if (!cancel) setLoading(false); }
-    };
-    run();
-    return ()=> { cancel = true; };
-  }, [q]);
+  const list = useMemo(() => {
+    const term = q.trim();
+    if (term.length < 2) return [];
+    return searchCustomers(customers, term);
+  }, [customers, q]);
   return (
     <div>
       <input
@@ -48,8 +37,7 @@ const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) =
         placeholder="Buscar cliente (min 2 caracteres)"
         style={{ width:'100%', padding:'10px 12px', border:'1px solid #ddd', borderRadius:8, marginBottom:6 }}
       />
-      {loading && <div style={{ fontSize:12, color:'#666' }}>Buscando…</div>}
-      {!loading && q.trim().length>=2 && (
+      {q.trim().length>=2 && (
         <div style={{ maxHeight:150, overflow:'auto', border:'1px solid #eee', borderRadius:8 }}>
           {list.length===0 ? (
             <div style={{ padding:8, color:'#666' }}>Sin resultados</div>
@@ -67,13 +55,20 @@ const ClienteSelector: React.FC<{ onSelect: (c: any)=>void }> = ({ onSelect }) =
 // Página principal del módulo de Ventas (UI) extraída desde App.tsx
 export const VentasPage: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
-  // clientes completos ya no se mantienen en este componente; ClienteSelector consulta al dominio
+  const [customers, setCustomers] = useState<any[]>([]);
   const [recentSales, setRecentSales] = useState<any[]>([]);
 
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
 
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => getInitialPaymentMethod());
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => {
+    let systemSettings: any = null;
+    try {
+      const raw = localStorage.getItem('systemSettings');
+      systemSettings = raw ? JSON.parse(raw) : null;
+    } catch {}
+    return getInitialPaymentMethod(systemSettings);
+  });
 
   const [quickSale, setQuickSale] = useState<QuickSale>({
     fecha: new Date().toISOString().split('T')[0],
@@ -87,6 +82,12 @@ export const VentasPage: React.FC = () => {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
+  const [cashSessions, setCashSessions] = useState<any[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [showSessionModal, setShowSessionModal] = useState(false);
+  const [sessionInitialAmount, setSessionInitialAmount] = useState<string>('');
+  const [sessionNote, setSessionNote] = useState('');
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   // Configuración de descuentos/IVA
   const [discountMap, setDiscountMap] = useState<DiscountMap>({ Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 });
@@ -94,30 +95,106 @@ export const VentasPage: React.FC = () => {
 
   const loadData = useCallback(async () => {
     try {
-      const data = await loadVentasData();
+      if (!(window as any).electronAPI) {
+        setProducts([]);
+        setCustomers([]);
+        setRecentSales([]);
+        return;
+      }
+      const [productsData, customersData, salesData] = await Promise.all([
+        (window as any).electronAPI.getProducts(),
+        (window as any).electronAPI.getCustomers(),
+        (window as any).electronAPI.getSales()
+      ]);
+      const data = await loadVentasData(productsData, customersData, salesData);
       setProducts(data.products);
+      setCustomers(data.customers);
       setRecentSales(data.recentSales);
     } catch (e) {
       console.error('Error loading sales data:', e);
     }
   }, []);
 
+  const loadCashSessions = useCallback(async () => {
+    setIsLoadingSessions(true);
+    try {
+      if (!(window as any).electronAPI?.getCashSessions) {
+        setCashSessions([]);
+        return;
+      }
+      const sessions = await (window as any).electronAPI.getCashSessions();
+      setCashSessions(sessions || []);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
+    loadCashSessions();
     const off = (window as any).electronAPI?.onSalesChanged?.(() => {
       loadData().catch(() => {});
     });
     return () => { if (typeof off === 'function') off(); };
-  }, [loadData]);
+  }, [loadData, loadCashSessions]);
 
   useEffect(() => {
     // Inicial rápido por localStorage para no bloquear UI
-    setDiscountMap(readDiscountMapFromLocal());
-    const localTax = readTaxRateFromLocal();
+    setDiscountMap(readDiscountMapFromLocal(localStorage.getItem('discountLevels')));
+    const localTax = readTaxRateFromLocal(localStorage.getItem('businessSettings'));
     setTaxRate(localTax);
     // Sincronizar desde settings
-    readTaxRateFromSettings(localTax).then(setTaxRate).catch(()=>{});
-    loadDiscountMapFromSettings().then(setDiscountMap).catch(()=>{});
+    const loadSettingsFromIPC = async () => {
+      if (!(window as any).electronAPI?.getSettings) return;
+      const rows = await (window as any).electronAPI.getSettings();
+      const tax = await readTaxRateFromSettings(rows, localTax);
+      setTaxRate(tax);
+      const settingsMap = new Map((rows || []).map((r: any) => [r.key, r.value] as const));
+      let levels: { Bronze?: number; Silver?: number; Gold?: number; Platinum?: number } | null = null;
+      const rawLevels =
+        settingsMap.get('discountLevels') ||
+        settingsMap.get('discount_levels') ||
+        settingsMap.get('customer_discount_levels');
+      if (rawLevels) {
+        try {
+          levels = JSON.parse(rawLevels);
+        } catch {
+          levels = null;
+        }
+      } else {
+        const fromKey = (key: string) => {
+          const value = settingsMap.get(key);
+          if (value === undefined) return undefined;
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+        levels = {
+          Bronze:
+            fromKey('discount_bronze') ??
+            fromKey('discount_level_bronze'),
+          Silver:
+            fromKey('discount_silver') ??
+            fromKey('discount_level_silver'),
+          Gold:
+            fromKey('discount_gold') ??
+            fromKey('discount_level_gold'),
+          Platinum:
+            fromKey('discount_platinum') ??
+            fromKey('discount_level_platinum'),
+        };
+        if (
+          levels.Bronze === undefined &&
+          levels.Silver === undefined &&
+          levels.Gold === undefined &&
+          levels.Platinum === undefined
+        ) {
+          levels = null;
+        }
+      }
+      const nextMap = await loadDiscountMapFromSettings(levels);
+      setDiscountMap(nextMap);
+    };
+    loadSettingsFromIPC().catch(() => {});
   }, []);
 
   // Productos → agregar al pedido
@@ -149,12 +226,35 @@ export const VentasPage: React.FC = () => {
   const currency = useMemo(()=> new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }), []);
   const appliedLevel = selectedCustomer?.discountLevel || 'Bronze';
   const appliedPercent = Math.round(((discountMap[appliedLevel]||0) * 100));
+  const openSession = cashSessions.find((s) => s.status === 'Abierta') || null;
+  const showCashGate = !openSession;
 
   const confirmOrder = useCallback(async () => {
     if (orderItems.length === 0 || isConfirming) return;
+    if (showCashGate) {
+      setFeedback({ type: 'error', message: 'Para hacer una venta primero debes abrir una sesión de caja.' });
+      return;
+    }
     setIsConfirming(true);
     try {
-      await confirmOrderSvc(orderItems, selectedCustomer, paymentMethod, { subtotal, discount, tax, total });
+      let requireCustomer = false;
+      try {
+        const sys = localStorage.getItem('systemSettings');
+        if (sys) {
+          const parsed = JSON.parse(sys);
+          requireCustomer = !!parsed.requireCustomerForSale;
+        }
+      } catch {}
+      const saleData = await confirmOrderSvc(
+        orderItems,
+        selectedCustomer,
+        paymentMethod,
+        { subtotal, discount, tax, total },
+        { requireCustomer }
+      );
+      if ((window as any).electronAPI?.createSale && saleData) {
+        await (window as any).electronAPI.createSale(saleData);
+      }
       setOrderItems([]);
       setSelectedCustomer(null);
       await loadData();
@@ -169,7 +269,7 @@ export const VentasPage: React.FC = () => {
     } finally {
       setIsConfirming(false);
     }
-  }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData]);
+  }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData, showCashGate]);
 
   useEffect(() => {
     if (!feedback) return;
@@ -181,6 +281,112 @@ export const VentasPage: React.FC = () => {
 
   return (
     <div style={{ position:'relative', padding:'30px', display:'grid', gridTemplateColumns:'1fr 420px', gap:'30px', minHeight:'100vh' }}>
+      {showCashGate && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(15, 23, 42, 0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9998 }}>
+          <div style={{ background:'#fff', padding:'22px 24px', borderRadius:12, boxShadow:'0 12px 32px rgba(0,0,0,0.2)', width:'min(420px, 90vw)' }}>
+            <div style={{ fontSize:18, fontWeight:700, marginBottom:6 }}>Sesión de caja requerida</div>
+            <div style={{ color:'#555', marginBottom:14 }}>Para hacer una venta primero debes abrir una sesión de caja.</div>
+            <button
+              type="button"
+              onClick={() => {
+                setSessionError(null);
+                setShowSessionModal(true);
+              }}
+              style={{ width:'100%', background:'#2f6fed', color:'#fff', border:'none', borderRadius:8, padding:'10px 12px', cursor:'pointer', fontWeight:600 }}
+              disabled={isLoadingSessions}
+            >
+              Nueva sesión
+            </button>
+          </div>
+        </div>
+      )}
+      {showSessionModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:10000 }}>
+          <div style={{ background:'#fff', padding:20, borderRadius:12, width:'min(420px, 90vw)', boxShadow:'0 12px 32px rgba(0,0,0,0.25)' }}>
+            <h3 style={{ marginTop:0 }}>Nueva sesión de caja</h3>
+            <div style={{ display:'grid', gap:10 }}>
+              <div style={{ display:'grid', gap:6 }}>
+                <label>Monto inicial</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={sessionInitialAmount}
+                  onChange={(e) => {
+                    setSessionInitialAmount(e.target.value);
+                    setSessionError(null);
+                  }}
+                />
+                <div style={{ fontSize:12, color:'#667085' }}>Ingresa el efectivo con el que inicia la caja.</div>
+              </div>
+              <div style={{ display:'grid', gap:6 }}>
+                <label>Nota (opcional)</label>
+                <input
+                  type="text"
+                  value={sessionNote}
+                  onChange={(e) => setSessionNote(e.target.value)}
+                  placeholder="Ej: Cambio inicial"
+                />
+              </div>
+              {sessionError && <div style={{ color:'#d32f2f', fontSize:12 }}>{sessionError}</div>}
+              <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSessionModal(false);
+                    setSessionError(null);
+                  }}
+                  style={{ background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'8px 12px' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const initialAmountValue = Number(sessionInitialAmount);
+                    if (!Number.isFinite(initialAmountValue) || initialAmountValue < 0) {
+                      setSessionError('El monto inicial debe ser 0 o mayor.');
+                      return;
+                    }
+                    const api = (window as any).electronAPI;
+                    if (!api?.createCashSession) {
+                      alert('IPC no disponible');
+                      return;
+                    }
+                    try {
+                      await api.createCashSession({
+                        startTime: new Date().toISOString(),
+                        initialAmount: initialAmountValue || 0,
+                        status: 'Abierta',
+                        notes: sessionNote.trim() || undefined,
+                        endTime: null,
+                        finalAmount: 0,
+                      });
+                      await loadCashSessions();
+                      setShowSessionModal(false);
+                      setSessionInitialAmount('');
+                      setSessionNote('');
+                      setSessionError(null);
+                      setFeedback({ type: 'success', message: 'Sesión abierta. Ya puedes vender.' });
+                    } catch (err: any) {
+                      if (err?.message === 'CASH_SESSION_ALREADY_OPEN') {
+                        await loadCashSessions();
+                        setShowSessionModal(false);
+                        setSessionError(null);
+                        return;
+                      }
+                      setSessionError('No se pudo crear la sesión.');
+                    }
+                  }}
+                  style={{ background:'#2f6fed', color:'#fff', border:'none', borderRadius:8, padding:'8px 12px', fontWeight:600 }}
+                >
+                  Crear sesión
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {isConfirming && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.35)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9999, pointerEvents:'auto' }}>
           <div style={{ background:'#fff', padding:'18px 24px', borderRadius:12, boxShadow:'0 12px 32px rgba(0,0,0,0.25)', fontWeight:600 }}>
@@ -265,7 +471,7 @@ export const VentasPage: React.FC = () => {
         {/* Cliente */}
         <div style={{ marginBottom:16, padding:14, background:'#f8f9fc', borderRadius:12, border:'2px solid #e2e8f0' }}>
           <label style={{ display:'block', marginBottom:8, fontWeight:600, color:'#2d3748' }}>👤 Cliente</label>
-          <ClienteSelector onSelect={(c)=> setSelectedCustomer(c)} />
+          <ClienteSelector customers={customers} onSelect={(c)=> setSelectedCustomer(c)} />
           {selectedCustomer ? (
             <div style={{ marginTop:8, padding:'10px 12px', background:'linear-gradient(135deg, #4299e1, #3182ce)', borderRadius:8, color:'#fff', fontSize:13, textAlign:'center' }}>
               Cliente seleccionado: <strong>{selectedCustomer.name}</strong> · Nivel: {selectedCustomer.discountLevel} · Descuento: {Math.round((discountMap[selectedCustomer.discountLevel]||0)*100)}%
@@ -332,7 +538,23 @@ export const VentasPage: React.FC = () => {
         </div>
 
         <div style={{ display:'flex', gap:8 }}>
-          <button onClick={confirmOrder} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#4caf50', color:'#fff', border:'none', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', fontWeight:700, opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Confirmar compra</button>
+          <button
+            onClick={confirmOrder}
+            disabled={orderItems.length===0 || isConfirming || showCashGate}
+            style={{
+              flex:1,
+              background:'#4caf50',
+              color:'#fff',
+              border:'none',
+              borderRadius:6,
+              padding:'10px 12px',
+              cursor: orderItems.length===0 || isConfirming || showCashGate ? 'not-allowed' : 'pointer',
+              fontWeight:700,
+              opacity: orderItems.length===0 || isConfirming || showCashGate ? 0.6 : 1
+            }}
+          >
+            Confirmar compra
+          </button>
           <button onClick={()=>setOrderItems([])} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Cancelar</button>
         </div>
 
@@ -377,4 +599,3 @@ export const VentasPage: React.FC = () => {
     </div>
   );
 };
-

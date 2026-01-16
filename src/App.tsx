@@ -5,6 +5,7 @@ import { VentasPage } from './presentation/modules/ventas';
 import { ClientesPage } from './presentation/modules/clientes/ClientesPage';
 import { InventarioPage } from './presentation/modules/inventario/InventarioPage';
 import { ConfiguracionPage } from './presentation/modules/configuracion/ConfiguracionPage';
+import { ProductosPage } from './presentation/modules/productos/ProductosPage';
 import {
   getCustomerStats as getCustomerStatsSvc,
   filterCustomerStats as filterCustomerStatsSvc,
@@ -19,16 +20,17 @@ import {
   getDescuentosTotales as getDescuentosTotalesRpt,
   getIngresosPorPeriodo as getIngresosPorPeriodoRpt,
   getTopProductos as getTopProductosRpt,
+  getRangeForKind,
+  filterSalesByRange as filterSalesByRangeRpt,
+  buildKpis as buildKpisRpt,
+  buildDailySeries as buildDailySeriesRpt,
+  getTopCategorias as getTopCategoriasRpt,
+  getLowStock as getLowStockRpt,
+  getTopClientes as getTopClientesRpt,
+  getNewVsReturning as getNewVsReturningRpt,
+  getOpenSession as getOpenSessionRpt,
+  getRecentSales as getRecentSalesRpt,
 } from './domain/reportes/reportesService';
-import {
-  loadProductos as loadProductosSvc,
-  filterProductos as filterProductosSvc,
-  validateProducto as validateProductoSvc,
-  createProducto as createProductoSvc,
-  updateProducto as updateProductoSvc,
-  deleteProducto as deleteProductoSvc,
-  getUniqueSKU,
-} from './domain/productos/productosService';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
 
@@ -276,116 +278,30 @@ const Dashboard = () => {
 
   const startOfMonth = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), 1);
   const addDays = (d: Date, days: number) => new Date(d.getTime() + days*86400000);
-  const floorDate = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const getRange = (): { start: Date; end: Date } => {
-    const today = floorDate(new Date());
-    switch (rangeKind) {
-      case 'hoy': return { start: today, end: addDays(today, 1) };
-      case '7d': return { start: addDays(today, -6), end: addDays(today, 1) };
-      case '30d': return { start: addDays(today, -29), end: addDays(today, 1) };
-      case 'mes': return { start: startOfMonth(today), end: addDays(today, 1) };
-      case 'custom': {
-        const s = new Date(customStart + 'T00:00:00');
-        const e = addDays(new Date(customEnd + 'T00:00:00'), 1);
-        return { start: s, end: e };
-      }
-      default: return { start: today, end: addDays(today, 1) };
-    }
-  };
+  const { start, end } = getRangeForKind(rangeKind, customStart, customEnd);
+  const filteredSales = filterSalesByRangeRpt(sales as any, start, end);
 
-  const { start, end } = getRange();
-  const filteredSales = sales.filter((s:any)=> {
-    const d = new Date(s.createdAt);
-    return d >= start && d < end;
-  });
-
-  const kpis = (() => {
-    const total = filteredSales.reduce((sum:number, s:any)=> sum + (s.total||0), 0);
-    const count = filteredSales.length;
-    const avg = count ? total / count : 0;
-    const byMethod: Record<string, number> = {};
-    filteredSales.forEach((s:any)=> {
-      const m = s.paymentMethod || 'Otro';
-      byMethod[m] = (byMethod[m]||0) + (s.total||0);
-    });
-    return { total, count, avg, byMethod };
-  })();
+  const kpis = buildKpisRpt(filteredSales as any);
 
   // Trend (daily totals within range up to 30 pts)
-  const buildDailySeries = () => {
-    const days = Math.min(30, Math.ceil((end.getTime()-start.getTime())/86400000));
-    const series: { date: Date; total: number }[] = [];
-    for (let i=0; i<days; i++) {
-      const d0 = addDays(start, i);
-      const d1 = addDays(start, i+1);
-      const t = sales.reduce((sum:number, s:any)=> {
-        const d = new Date(s.createdAt);
-        return (d>=d0 && d<d1) ? sum + (s.total||0) : sum;
-      }, 0);
-      series.push({ date: d0, total: t });
-    }
-    return series;
-  };
-  const series = buildDailySeries();
+  const series = buildDailySeriesRpt(sales as any, start, end, 30);
   const maxY = Math.max(1, ...series.map(p=>p.total));
 
   // Top categorías (por ingresos)
-  const topCategorias = (() => {
-    const map = new Map<string, number>();
-    filteredSales.forEach((s:any)=> {
-      (s.items||[]).forEach((it:any)=> {
-        let cat = 'Otros';
-        if (it.productId && it.productId !== 0) {
-          const p = products.find(pr=> pr.id === it.productId);
-          cat = p?.category || 'Otros';
-        } else if (s.notes && typeof s.notes === 'string') {
-          const m = s.notes.match(/Categoría:\s*([^|]+)/i);
-          if (m) cat = m[1].trim();
-        }
-        map.set(cat, (map.get(cat)||0) + (it.subtotal || 0));
-      });
-    });
-    return Array.from(map.entries()).sort((a,b)=> b[1]-a[1]).slice(0,5);
-  })();
+  const topCategorias = getTopCategoriasRpt(filteredSales as any, products as any, 5);
 
   // Low stock
-  const lowStock = products.filter(p=> (p.stock??0) > 0 && (p.stock??0) < 10).sort((a,b)=> a.stock-b.stock).slice(0,6);
+  const lowStock = getLowStockRpt(products as any, 6);
 
   // Top clientes
-  const topClientes = (()=> {
-    const byCustomer = new Map<number, { customer:any, total:number }>();
-    filteredSales.forEach((s:any)=> {
-      if (!s.customerId) return;
-      const c = customers.find(cc=> cc.id === s.customerId);
-      if (!c) return;
-      const cur = byCustomer.get(s.customerId) || { customer: c, total: 0 };
-      cur.total += (s.total||0);
-      byCustomer.set(s.customerId, cur);
-    });
-    return Array.from(byCustomer.values()).sort((a,b)=> b.total-a.total).slice(0,5);
-  })();
+  const topClientes = getTopClientesRpt(filteredSales as any, customers as any, 5);
 
   // New vs recurrentes en el rango
-  const newVsReturning = (()=>{
-    let nuevos = 0, recurrentes = 0;
-    const startTs = start.getTime();
-    const salesByCustomer = new Map<number, number[]>();
-    sales.forEach((s:any)=> { if (s.customerId) {
-      const arr = salesByCustomer.get(s.customerId) || [];
-      arr.push(new Date(s.createdAt).getTime());
-      salesByCustomer.set(s.customerId, arr);
-    }});
-    const idsInRange = new Set<number>();
-    filteredSales.forEach((s:any)=> { if (s.customerId) idsInRange.add(s.customerId); });
-    idsInRange.forEach(id=> {
-      const arr = (salesByCustomer.get(id)||[]).filter(ts=> ts < startTs);
-      if (arr.length === 0) nuevos++; else recurrentes++;
-    });
-    return { nuevos, recurrentes };
-  })();
+  const newVsReturning = getNewVsReturningRpt(sales as any, filteredSales as any, start);
 
   // Sesión de caja
-  const openSession = (cashSessions||[]).find((s:any)=> s.status === 'Abierta') || null;
+  const openSession = getOpenSessionRpt(cashSessions || []);
+  const recentSales = getRecentSalesRpt(sales as any, 10);
 
   return (
     <div className="lux-dashboard" style={{ padding: '36px min(4vw,64px) 60px', width:'100%', boxSizing:'border-box' }}>
@@ -574,7 +490,7 @@ const Dashboard = () => {
         <div className="stat-card" style={{ padding:16 }}>
           <strong>Ventas recientes</strong>
           <div style={{ marginTop:10, maxHeight:220, overflow:'auto', display:'grid', gap:8 }}>
-            {[...sales].sort((a:any,b:any)=> new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime()).slice(0,10).map((s:any)=> (
+            {recentSales.map((s:any)=> (
               <div key={s.id} style={{ display:'grid', gridTemplateColumns:'auto 1fr auto', gap:8, alignItems:'center' }}>
                 <span style={{ fontSize:12, color:'#666' }}>{new Date(s.createdAt).toLocaleString('es-MX')}</span>
                 <span style={{ color:'#555' }}>{s.paymentMethod||'Otro'}</span>
@@ -628,313 +544,6 @@ const Dashboard = () => {
 // Ventas UI fue extraída a src/presentation/modules/ventas/VentasPage
 
 
-const Products = () => {
-  const [products, setProducts] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<any>(null);
-  const [newProduct, setNewProduct] = useState({
-    sku: '', name: '', price: 0, stock: 0, category: '', description: ''
-  });
-
-
-  useEffect(() => {
-    loadProducts();
-  }, []);
-
-  const loadProducts = async () => {
-    try {
-      const data = await loadProductosSvc();
-      setProducts(data);
-    } catch (error) {
-      console.error('Error loading products:', error);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      // Validar antes de enviar
-      const v = validateProductoSvc(newProduct);
-      if (!v.ok) {
-        const first = Object.values(v.errors)[0] || 'Datos inválidos';
-        alert(first);
-        return;
-      }
-      if (editingProduct) {
-        await updateProductoSvc(editingProduct.id, newProduct);
-      } else {
-        await createProductoSvc(newProduct as any);
-      }
-      resetForm();
-      loadProducts();
-    } catch (error) {
-      const err: any = error as any;
-      console.error('Error saving product:', err);
-      if (err?.message === 'VALIDATION_ERROR' && err.fields) {
-        const first = Object.values(err.fields)[0] as string;
-        alert(first || 'Error de validación');
-      } else {
-        alert('Error al guardar el producto');
-      }
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (confirm('¿Estás seguro de que quieres eliminar este producto?')) {
-      try {
-        await deleteProductoSvc(id);
-        loadProducts();
-      } catch (error) {
-        console.error('Error deleting product:', error);
-        alert('Error al eliminar el producto');
-      }
-    }
-  };
-
-  const handleEdit = (product: any) => {
-    setEditingProduct(product);
-    setNewProduct({
-      sku: product.sku,
-      name: product.name,
-      price: product.price,
-      stock: product.stock,
-      category: product.category,
-      description: product.description || ''
-    });
-    setShowAddForm(true);
-  };
-
-  // Cuando se abre el formulario de nuevo producto, autogenerar SKU
-  const handleShowAddForm = () => {
-    setEditingProduct(null);
-    const uniqueSku = getUniqueSKU(products);
-    setNewProduct({ sku: uniqueSku, name: '', price: 0, stock: 0, category: '', description: '' });
-    setShowAddForm(true);
-  };
-
-  const resetForm = () => {
-    setNewProduct({ sku: '', name: '', price: 0, stock: 0, category: '', description: '' });
-    setEditingProduct(null);
-    setShowAddForm(false);
-  };
-
-  const filteredProducts = filterProductosSvc(products, searchTerm);
-
-  return (
-    <div style={{ padding: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1>📦 Gestión de Productos</h1>
-        <button 
-          onClick={handleShowAddForm}
-          style={{ 
-            background: '#2196f3', 
-            color: 'white', 
-            padding: '12px 24px', 
-            border: 'none', 
-            borderRadius: '4px', 
-            cursor: 'pointer',
-            fontSize: '16px'
-          }}
-        >
-          + Nuevo Producto
-        </button>
-      </div>
-
-      <div style={{ marginBottom: '20px' }}>
-        <input
-          type="text"
-          placeholder="Buscar por nombre, SKU o categoría..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{ 
-            width: '100%', 
-            maxWidth: '400px',
-            padding: '12px', 
-            border: '1px solid #ddd', 
-            borderRadius: '4px', 
-            fontSize: '16px' 
-          }}
-        />
-      </div>
-
-      {/* Formulario */}
-      {showAddForm && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-        }}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', minWidth: '500px' }}>
-            <h2>{editingProduct ? 'Editar Producto' : 'Nuevo Producto'}</h2>
-            <form onSubmit={handleSubmit}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px' }}>SKU:</label>
-                  <input
-                    type="text"
-                    value={newProduct.sku}
-                    readOnly={!editingProduct}
-                    onChange={editingProduct ? (e) => setNewProduct({...newProduct, sku: e.target.value}) : undefined}
-                    required
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', background: editingProduct ? 'white' : '#f5f5f5', color: editingProduct ? 'black' : '#888' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px' }}>Categoría:</label>
-                  <select
-                    value={newProduct.category}
-                    onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
-                    required
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                  >
-                    <option value="">Seleccionar...</option>
-                    <option value="Anillos">Anillos</option>
-                    <option value="Collares">Collares</option>
-                    <option value="Aretes">Aretes</option>
-                    <option value="Pulseras">Pulseras</option>
-                    <option value="Relojes">Relojes</option>
-                    <option value="Otros">Otros</option>
-                  </select>
-                </div>
-              </div>
-              <div style={{ marginBottom: '15px' }}>
-                <label style={{ display: 'block', marginBottom: '5px' }}>Nombre:</label>
-                <input
-                  type="text"
-                  value={newProduct.name}
-                  onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
-                  required
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px' }}>Precio:</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newProduct.price}
-                    onChange={(e) => setNewProduct({...newProduct, price: parseFloat(e.target.value) || 0})}
-                    required
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '5px' }}>Stock:</label>
-                  <input
-                    type="number"
-                    value={newProduct.stock}
-                    onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value) || 0})}
-                    required
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                  />
-                </div>
-              </div>
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '5px' }}>Descripción:</label>
-                <textarea
-                  value={newProduct.description}
-                  onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
-                  rows={3}
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', resize: 'vertical' }}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button 
-                  type="button" 
-                  onClick={resetForm}
-                  style={{ padding: '8px 16px', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer' }}
-                >
-                  Cancelar
-                </button>
-                <button 
-                  type="submit"
-                  style={{ 
-                    background: '#4caf50', 
-                    color: 'white', 
-                    padding: '8px 16px', 
-                    border: 'none', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer' 
-                  }}
-                >
-                  {editingProduct ? 'Actualizar' : 'Crear'} Producto
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Tabla de productos */}
-      <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e0e0e0' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead style={{ background: '#f5f5f5' }}>
-            <tr>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>SKU</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Producto</th>
-              <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e0e0e0' }}>Categoría</th>
-              <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Precio</th>
-              <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #e0e0e0' }}>Stock</th>
-              <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #e0e0e0' }}>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredProducts.map((product) => (
-              <tr key={product.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                <td style={{ padding: '12px', fontFamily: 'monospace' }}>{product.sku}</td>
-                <td style={{ padding: '12px' }}>
-                  <div>
-                    <div style={{ fontWeight: 'bold' }}>{product.name}</div>
-                    {product.description && (
-                      <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{product.description}</div>
-                    )}
-                  </div>
-                </td>
-                <td style={{ padding: '12px' }}>
-                  <span style={{
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    background: '#e3f2fd',
-                    color: '#1565c0'
-                  }}>
-                    {product.category}
-                  </span>
-                </td>
-                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>${product.price.toFixed(2)}</td>
-                <td style={{ padding: '12px', textAlign: 'right' }}>
-                  <span style={{
-                    color: product.stock < 10 ? '#d32f2f' : product.stock < 20 ? '#f57c00' : '#388e3c',
-                    fontWeight: product.stock < 10 ? 'bold' : 'normal'
-                  }}>
-                    {product.stock}
-                    {product.stock < 10 && ' ⚠️'}
-                  </span>
-                </td>
-                <td style={{ padding: '12px', textAlign: 'center' }}>
-                  <button 
-                    onClick={() => handleEdit(product)}
-                    style={{ marginRight: '8px', padding: '4px 8px', border: '1px solid #2196f3', background: 'white', color: '#2196f3', borderRadius: '4px', cursor: 'pointer' }}
-                  >
-                    Editar
-                  </button>
-                  <button 
-                    onClick={() => handleDelete(product.id)}
-                    style={{ padding: '4px 8px', border: '1px solid #d32f2f', background: 'white', color: '#d32f2f', borderRadius: '4px', cursor: 'pointer' }}
-                  >
-                    Eliminar
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
 // Continúo implementando el resto de componentes...
 // Componente de Corte de Caja
 const CashSession = () => {
@@ -944,6 +553,10 @@ const CashSession = () => {
   const [editingSession, setEditingSession] = useState<any>(null);
   const [detailSession, setDetailSession] = useState<any>(null);
   const [sessionToDelete, setSessionToDelete] = useState<any>(null);
+  const [movementType, setMovementType] = useState<'Entrada' | 'Salida'>('Entrada');
+  const [movementAmount, setMovementAmount] = useState<number>(0);
+  const [movementNote, setMovementNote] = useState('');
+  const [movementToast, setMovementToast] = useState<string | null>(null);
   const [newSession, setNewSession] = useState({
     initialAmount: 0, finalAmount: 0, notes: ''
   });
@@ -999,8 +612,11 @@ const CashSession = () => {
       count += 1;
     });
     const avg = count ? total / count : 0;
-    const expectedCash = (session.initialAmount || 0) + (byMethod['Efectivo'] || 0);
-    return { total, count, avg, totalTax, totalDiscount, byMethod, expectedCash };
+    const movements = session.movements || [];
+    const totalEntradas = movements.filter((m: any) => m.type === 'Entrada').reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
+    const totalSalidas = movements.filter((m: any) => m.type === 'Salida').reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
+    const expectedCash = (session.initialAmount || 0) + (byMethod['Efectivo'] || 0) + totalEntradas - totalSalidas;
+    return { total, count, avg, totalTax, totalDiscount, byMethod, expectedCash, totalEntradas, totalSalidas };
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1027,8 +643,20 @@ const CashSession = () => {
         loadCashSessions();
         loadSales();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving cash session:', error);
+      if (error?.message === 'CASH_SESSION_ALREADY_OPEN') {
+        alert('Ya hay una sesión abierta. Ciérrala antes de crear otra.');
+        return;
+      }
+      if (error?.message === 'CASH_SESSION_ALREADY_CLOSED') {
+        alert('Esta sesión ya está cerrada.');
+        return;
+      }
+      if (error?.message === 'CASH_SESSION_NOT_FOUND') {
+        alert('Sesión no encontrada. Refresca la lista.');
+        return;
+      }
       alert('Error al guardar la sesión de caja');
     }
   };
@@ -1081,8 +709,85 @@ const CashSession = () => {
   const setDenom = (den:number, val:number)=> {
     setCashCount(prev=> ({ ...prev, [String(den)]: Math.max(0, Math.floor(val)||0) }));
   };
-  const useCountAsFinal = ()=> {
-    setNewSession(s=> ({ ...s, finalAmount: Number(countedCashTotal.toFixed(2)) }));
+  const useCountAsFinal = () => {
+    const total = Number(countedCashTotal.toFixed(2));
+    setNewSession(s=> ({ ...s, finalAmount: total }));
+    if (!openSession || openSession.status !== 'Abierta') {
+      alert('No hay sesión abierta.');
+      return;
+    }
+    if (!window.electronAPI?.updateCashSession) {
+      alert('IPC no disponible');
+      return;
+    }
+    window.electronAPI.updateCashSession(openSession.id, { cashCount, cashCountTotal: total })
+      .then(loadCashSessions)
+      .catch((error: any) => {
+        console.error('Error saving cash count:', error);
+        alert('No se pudo guardar el arqueo');
+      });
+  };
+  const resetMovementForm = () => {
+    setMovementType('Entrada');
+    setMovementAmount(0);
+    setMovementNote('');
+  };
+  const showMovementToast = (msg: string) => {
+    setMovementToast(msg);
+    setTimeout(() => setMovementToast(null), 2000);
+  };
+  const addMovement = async () => {
+    if (!openSession || openSession.status !== 'Abierta') {
+      alert('No hay sesión abierta.');
+      return;
+    }
+    if (!window.electronAPI?.updateCashSession) {
+      alert('IPC no disponible');
+      return;
+    }
+    if (!(movementAmount > 0)) {
+      alert('El monto debe ser mayor a 0.');
+      return;
+    }
+    const current = openSession.movements || [];
+    const nextId = current.length ? Math.max(...current.map((m: any) => m.id || 0)) + 1 : 1;
+    const movement = {
+      id: nextId,
+      type: movementType,
+      amount: Number(movementAmount),
+      note: movementNote ? movementNote.trim() : undefined,
+      createdAt: new Date().toISOString()
+    };
+    try {
+      await window.electronAPI.updateCashSession(openSession.id, { movements: [...current, movement] });
+      resetMovementForm();
+      await loadCashSessions();
+      alert('Movimiento agregado');
+    } catch (error) {
+      console.error('Error adding movement:', error);
+      alert('No se pudo agregar el movimiento');
+    }
+  };
+  const removeMovement = async (movementId: number) => {
+    if (!openSession || openSession.status !== 'Abierta') {
+      alert('No hay sesión abierta.');
+      return;
+    }
+    if (!window.electronAPI?.updateCashSession) {
+      alert('IPC no disponible');
+      return;
+    }
+    if (!confirm('¿Eliminar este movimiento?')) return;
+    const current = openSession.movements || [];
+    const nextMovements = current.filter((m: any) => m.id !== movementId);
+    try {
+      await window.electronAPI.updateCashSession(openSession.id, { movements: nextMovements });
+      await loadCashSessions();
+      showMovementToast('Movimiento eliminado');
+    } catch (error) {
+      console.error('Error removing movement:', error);
+      alert('No se pudo eliminar el movimiento');
+    }
   };
   const exportSessionCSV = (session:any)=> {
     const items = getSessionSales(session);
@@ -1109,6 +814,13 @@ const CashSession = () => {
   const printSession = (session:any)=> {
     const s = summarizeSession(session);
     const lines = getSessionSales(session).map((v:any)=> `• ${new Date(v.createdAt).toLocaleString('es-MX')} — ${v.paymentMethod||'Otro'} — ${formatMoney(v.total)}`).join('<br/>');
+    const cashCountRows = Object.entries(session.cashCount || {})
+      .filter(([, qty]) => Number(qty) > 0)
+      .map(([den, qty]) => `${den}: ${qty}`)
+      .join('<br/>');
+    const cashCountSection = session.cashCountTotal !== undefined
+      ? `<hr/><div><b>Arqueo</b></div><div>${cashCountRows || 'Sin denominaciones registradas'}</div><div><b>Total:</b> ${formatMoney(session.cashCountTotal || 0)}</div>`
+      : '<hr/><div><b>Arqueo</b></div><div>Sin arqueo guardado</div>';
     const html = `
       <html><head><title>Corte de Caja</title>
       <style>body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding:16px} h2{margin:0 0 8px} .row{margin:4px 0}</style>
@@ -1127,6 +839,7 @@ const CashSession = () => {
       <div class="row"><b>Efectivo esperado:</b> ${formatMoney(s.expectedCash)}</div>
       ${session.finalAmount ? `<div class="row"><b>Efectivo reportado:</b> ${formatMoney(session.finalAmount)}</div>` : ''}
       ${session.finalAmount ? `<div class="row"><b>Diferencia:</b> ${formatMoney((session.finalAmount||0) - s.expectedCash)}</div>` : ''}
+      ${cashCountSection}
       <hr/>
       <div><b>Ventas</b></div>
       <div>${lines || 'Sin ventas'}</div>
@@ -1195,7 +908,17 @@ const CashSession = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
         <h1>💰 Corte de Caja</h1>
         <button 
-          onClick={() => { if (openSession) return; setShowAddForm(true); setEditingSession(null); setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' }); setShowCashCount(false); setCashCount({}); }}
+          onClick={() => {
+            if (openSession) {
+              alert('Ya hay una sesión abierta. Ciérrala antes de crear otra.');
+              return;
+            }
+            setShowAddForm(true);
+            setEditingSession(null);
+            setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' });
+            setShowCashCount(false);
+            setCashCount({});
+          }}
           style={{ 
             background: openSession ? '#9e9e9e' : '#4caf50', 
             color: '#fff', 
@@ -1220,6 +943,8 @@ const CashSession = () => {
             <div style={{ display:'flex', gap:16, marginTop:8, flexWrap:'wrap' }}>
               <div>Inicial: <strong>{formatMoney(openSession.initialAmount)}</strong></div>
               <div>Efectivo: <strong>{formatMoney(s.byMethod['Efectivo']||0)}</strong></div>
+              <div>Entradas: <strong>{formatMoney(s.totalEntradas)}</strong></div>
+              <div>Salidas: <strong>{formatMoney(s.totalSalidas)}</strong></div>
               <div>Esperado: <strong>{formatMoney(s.expectedCash)}</strong></div>
               <div>Ventas: <strong>{s.count}</strong></div>
             </div>
@@ -1230,6 +955,49 @@ const CashSession = () => {
           </div>
         </div>
       ); })()}
+      {openSession && openSession.status === 'Abierta' && (
+        <div style={{ marginBottom:16, padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
+          <h4 style={{ marginTop:0 }}>Movimientos</h4>
+          <div style={{ display:'grid', gridTemplateColumns:'120px 140px 1fr auto auto', gap:8 }}>
+            <select value={movementType} onChange={e => setMovementType(e.target.value as 'Entrada' | 'Salida')}>
+              <option value="Entrada">Entrada</option>
+              <option value="Salida">Salida</option>
+            </select>
+            <input type="number" min={0} step="0.01" value={movementAmount}
+              onChange={e => setMovementAmount(Number(e.target.value) || 0)} placeholder="Monto" />
+            <input type="text" value={movementNote} onChange={e => setMovementNote(e.target.value)} placeholder="Nota (opcional)" />
+            <button type="button" onClick={addMovement}>Agregar movimiento</button>
+            <button type="button" onClick={resetMovementForm}>Limpiar</button>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            {((openSession.movements || []).length === 0) ? (
+              <div style={{ color: '#666' }}>Sin movimientos</div>
+            ) : (
+              <div style={{ display:'grid', gridTemplateColumns:'1.2fr 0.7fr 0.6fr 1fr auto', gap:8 }}>
+                <div style={{ fontWeight:600 }}>Fecha/Hora</div>
+                <div style={{ fontWeight:600 }}>Tipo</div>
+                <div style={{ fontWeight:600 }}>Monto</div>
+                <div style={{ fontWeight:600 }}>Nota</div>
+                <div style={{ fontWeight:600 }}>Acción</div>
+                {(openSession.movements || [])
+                  .slice()
+                  .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                  .map((m: any) => (
+                    <React.Fragment key={m.id}>
+                      <div>{new Date(m.createdAt).toLocaleString('es-MX')}</div>
+                      <div>{m.type}</div>
+                      <div>{formatMoney(m.amount || 0)}</div>
+                      <div>{m.note || '—'}</div>
+                      <div>
+                        <button type="button" onClick={() => removeMovement(m.id)}>Eliminar</button>
+                      </div>
+                    </React.Fragment>
+                  ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Filtros por fecha */}
       <div style={{ display:'flex', gap:12, alignItems:'center', marginBottom:14 }}>
@@ -1300,6 +1068,22 @@ const CashSession = () => {
                         <div>Total contado: <strong>{formatMoney(countedCashTotal)}</strong></div>
                         <button type="button" onClick={useCountAsFinal} style={{ padding:'6px 10px', border:'1px solid #4caf50', background:'#fff', color:'#4caf50', borderRadius:6, cursor:'pointer' }}>Usar como monto final</button>
                       </div>
+                      <div style={{ marginTop:8 }}>
+                        {(denominations || []).filter(den => (cashCount[String(den)] || 0) > 0).length === 0 ? (
+                          <div style={{ color:'#666' }}>Sin denominaciones registradas</div>
+                        ) : (
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:6 }}>
+                            {(denominations || [])
+                              .filter(den => (cashCount[String(den)] || 0) > 0)
+                              .map(den => (
+                                <React.Fragment key={den}>
+                                  <div>{den >= 1 ? `$${den}` : `${den}¢`}</div>
+                                  <div>{cashCount[String(den)]}</div>
+                                </React.Fragment>
+                              ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1326,6 +1110,8 @@ const CashSession = () => {
                     <div><strong>Efectivo</strong><div>${(s.byMethod['Efectivo']||0).toFixed(2)}</div></div>
                     <div><strong>Tarjeta</strong><div>${(s.byMethod['Tarjeta']||0).toFixed(2)}</div></div>
                     <div><strong>Transferencia</strong><div>${(s.byMethod['Transferencia']||0).toFixed(2)}</div></div>
+                    <div><strong>Entradas</strong><div>${s.totalEntradas.toFixed(2)}</div></div>
+                    <div><strong>Salidas</strong><div>${s.totalSalidas.toFixed(2)}</div></div>
                   </div>
                   <div style={{ marginTop:'10px' }}>
                     <strong>Efectivo Esperado</strong>: ${s.expectedCash.toFixed(2)}
@@ -1446,6 +1232,9 @@ const CashSession = () => {
           </tbody>
         </table>
       </div>
+      {movementToast && (
+        <div style={{ position:'fixed', bottom:16, right:16, background:'#333', color:'#fff', padding:'8px 12px', borderRadius:8 }}>{movementToast}</div>
+      )}
 
       {/* Modal de detalle */}
       {detailSession && (() => { const s = summarizeSession(detailSession); return (
@@ -1484,6 +1273,30 @@ const CashSession = () => {
               <div style={{ marginTop:6, fontWeight:'bold', color:(detailSession.finalAmount - s.expectedCash)===0? '#4caf50' : (detailSession.finalAmount - s.expectedCash)>0 ? '#2e7d32' : '#d32f2f' }}>
                 Diferencia: ${(detailSession.finalAmount - s.expectedCash).toFixed(2)}
               </div>
+            </div>
+            <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff', marginBottom:12 }}>
+              <div style={{ fontWeight:600, marginBottom:8 }}>🧮 Arqueo guardado</div>
+              {detailSession.cashCountTotal !== undefined ? (
+                <>
+                  <div style={{ marginBottom:8 }}>Total: <strong>${formatMoney(detailSession.cashCountTotal || 0)}</strong></div>
+                  {(Object.entries(detailSession.cashCount || {}).filter(([, qty]) => Number(qty) > 0).length === 0) ? (
+                    <div style={{ color:'#666' }}>Sin denominaciones registradas</div>
+                  ) : (
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:6 }}>
+                      {Object.entries(detailSession.cashCount || {})
+                        .filter(([, qty]) => Number(qty) > 0)
+                        .map(([den, qty]) => (
+                          <React.Fragment key={den}>
+                            <div>{den}</div>
+                            <div>{qty as any}</div>
+                          </React.Fragment>
+                        ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ color:'#666' }}>Sin arqueo guardado</div>
+              )}
             </div>
             <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
               <div style={{ fontWeight:600, marginBottom:8 }}>🧾 Ventas de la sesión</div>
@@ -1534,7 +1347,10 @@ const Reports = () => {
   const [sales, setSales] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [cashSessions, setCashSessions] = useState<any[]>([]);
+  const [selectedCashSessionId, setSelectedCashSessionId] = useState<number | 'all'>('all');
   const [activeTab, setActiveTab] = useState('general');
+  const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<string|null>(null);
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=> setToast(null), 2500); };
   // Estado para detalles de cliente
@@ -1546,6 +1362,12 @@ const Reports = () => {
   const [paymentFilter, setPaymentFilter] = useState<'Todos'|'Efectivo'|'Tarjeta'|'Transferencia'|'Otro'>('Todos');
   const [productQuery, setProductQuery] = useState('');
   const [customerQuery, setCustomerQuery] = useState('');
+  const isInvalidRange = dateRange.startDate > dateRange.endDate;
+  const normalizeCashSessionId = (v: any): number | 'all' => {
+    if (v === 'all' || v === null || v === undefined) return 'all';
+    const parsed = Number(v);
+    return Number.isFinite(parsed) ? parsed : 'all';
+  };
 
   useEffect(() => {
     loadData();
@@ -1564,14 +1386,19 @@ const Reports = () => {
         const tab = map['reports_active_tab'];
         const pQuery = map['reports_product_query'];
         const cQuery = map['reports_customer_query'];
+        const cashSessionRaw = map['reports_cash_session_id'];
         if (start && end) setDateRange({ startDate: start, endDate: end });
         if (method) setPaymentFilter(method);
         if (tab) setActiveTab(tab);
         if (typeof pQuery === 'string') setProductQuery(pQuery);
         if (typeof cQuery === 'string') setCustomerQuery(cQuery);
+        if (cashSessionRaw !== undefined) {
+          setSelectedCashSessionId(normalizeCashSessionId(cashSessionRaw));
+        }
         // Mirror to localStorage
         try {
           const current = JSON.parse(localStorage.getItem('reportsSettings')||'{}');
+          const normalizedCashSessionId = normalizeCashSessionId(cashSessionRaw ?? current.cashSessionId);
           localStorage.setItem('reportsSettings', JSON.stringify({
             ...current,
             startDate: start ?? current.startDate,
@@ -1579,7 +1406,8 @@ const Reports = () => {
             paymentFilter: method ?? current.paymentFilter,
             activeTab: tab ?? current.activeTab,
             productQuery: typeof pQuery==='string'?pQuery:current.productQuery,
-            customerQuery: typeof cQuery==='string'?cQuery:current.customerQuery
+            customerQuery: typeof cQuery==='string'?cQuery:current.customerQuery,
+            cashSessionId: normalizedCashSessionId
           }));
         } catch {}
         return;
@@ -1595,6 +1423,7 @@ const Reports = () => {
         if (v.activeTab) setActiveTab(v.activeTab);
         if (typeof v.productQuery==='string') setProductQuery(v.productQuery);
         if (typeof v.customerQuery==='string') setCustomerQuery(v.customerQuery);
+        if (v.cashSessionId !== undefined) setSelectedCashSessionId(normalizeCashSessionId(v.cashSessionId));
       }
     } catch {}
   };
@@ -1611,6 +1440,7 @@ const Reports = () => {
   };
 
   const loadData = async () => {
+    setIsLoading(true);
     try {
       if (window.electronAPI) {
         const [salesData, productsData, customersData] = await Promise.all([
@@ -1622,8 +1452,21 @@ const Reports = () => {
         setProducts(productsData);
         setCustomers(customersData);
       }
+      if (window.electronAPI?.getCashSessions) {
+        try {
+          const sessions = await window.electronAPI.getCashSessions();
+          setCashSessions(sessions || []);
+        } catch (error) {
+          console.error('Error loading cash sessions:', error);
+          setCashSessions([]);
+        }
+      } else {
+        setCashSessions([]);
+      }
     } catch (error) {
       console.error('Error loading data:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -1642,6 +1485,10 @@ const Reports = () => {
 
   const setQuickRange = (key: 'hoy'|'7d'|'30d'|'mes') => {
     const now = new Date();
+    if (selectedCashSessionId !== 'all') {
+      setSelectedCashSessionId('all');
+      showToast('Sesión desactivada');
+    }
     if (key === 'hoy') {
       const d = now.toISOString().split('T')[0];
       setDateRange({ startDate: d, endDate: d });
@@ -1660,6 +1507,46 @@ const Reports = () => {
       const end = new Date(y, m+1, 0).toISOString().split('T')[0];
       setDateRange({ startDate: start, endDate: end });
     }
+  };
+
+  const updateStartDate = (value: string) => {
+    if (selectedCashSessionId !== 'all') {
+      setSelectedCashSessionId('all');
+      showToast('Sesión desactivada');
+    }
+    setDateRange(prev => {
+      const startDate = value;
+      const wasInvalid = startDate > prev.endDate;
+      const endDate = wasInvalid ? startDate : prev.endDate;
+      if (wasInvalid) showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+      return { startDate, endDate };
+    });
+  };
+
+  const updateEndDate = (value: string) => {
+    if (selectedCashSessionId !== 'all') {
+      setSelectedCashSessionId('all');
+      showToast('Sesión desactivada');
+    }
+    setDateRange(prev => {
+      const endDate = value;
+      const wasInvalid = endDate < prev.startDate;
+      const startDate = wasInvalid ? endDate : prev.startDate;
+      if (wasInvalid) showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+      return { startDate, endDate };
+    });
+  };
+
+  const clearFilters = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    setDateRange({ startDate: today, endDate: today });
+    setQuickRange('hoy');
+    setSelectedCashSessionId('all');
+    setPaymentFilter('Todos');
+    setActiveTab('general');
+    setProductQuery('');
+    setCustomerQuery('');
+    showToast('Filtros limpiados');
   };
 
   // Persist on changes
@@ -1692,7 +1579,29 @@ const Reports = () => {
     return ()=> clearTimeout(t);
   }, [customerQuery]);
 
+  useEffect(()=>{
+    const normalized = normalizeCashSessionId(selectedCashSessionId);
+    persistReportsLS({ cashSessionId: normalized });
+    persistReportSetting('reports_cash_session_id', String(normalized));
+  }, [selectedCashSessionId]);
+
+  useEffect(() => {
+    if (selectedCashSessionId === 'all') return;
+    const session = cashSessions.find(s => s.id === selectedCashSessionId);
+    if (!session) {
+      setSelectedCashSessionId('all');
+      return;
+    }
+    const start = new Date(session.startTime).toISOString().slice(0, 10);
+    const end = session.endTime ? new Date(session.endTime).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+    setDateRange({ startDate: start, endDate: end });
+  }, [selectedCashSessionId, cashSessions]);
+
   const exportSalesCSV = () => {
+    if (isInvalidRange) {
+      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+      return;
+    }
     const header = ['Fecha','ID Venta','ClienteID','Método','Subtotal','Descuento','Impuesto','Total'];
     const rows = filteredSales.map((s:any)=> [
       new Date(s.createdAt).toLocaleString('es-MX'),
@@ -1709,9 +1618,11 @@ const Reports = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `reporte_ventas_${dateRange.startDate}_a_${dateRange.endDate}.csv`;
+    const sessionSuffix = selectedCashSessionId !== 'all' ? `_session_${selectedCashSessionId}` : '';
+    a.download = `reporte_ventas_${dateRange.startDate}_a_${dateRange.endDate}${sessionSuffix}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    showToast('CSV generado');
   };
 
   const exportProductsCSV = () => {
@@ -1737,20 +1648,30 @@ const Reports = () => {
   // exportCategoriesCSV removido (no usado)
 
   const printReport = () => {
+    if (isInvalidRange) {
+      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+      return;
+    }
     const s = stats;
     const byMethod = filteredSales.reduce((acc:any, v:any)=> { const m = v.paymentMethod||'Otro'; acc[m]=(acc[m]||0)+(v.total||0); return acc; }, {});
+    const sessionLine = selectedCashSessionId !== 'all' ? `<div class="row"><b>Sesión de caja:</b> #${selectedCashSessionId}</div>` : '';
     const html = `
       <html><head><title>Reporte</title>
       <style>body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding:16px} h2{margin:0 0 8px} .row{margin:4px 0}</style>
       </head><body>
       <h2>Reporte de Ventas</h2>
+      ${sessionLine}
       <div class="row"><b>Periodo:</b> ${dateRange.startDate} a ${dateRange.endDate}</div>
       <div class="row"><b>Ventas Totales:</b> $${s.totalSales.toFixed(2)} (${s.totalTransactions} transacciones)</div>
       <div class="row"><b>Promedio:</b> $${s.avgSale.toFixed(2)} | <b>Descuentos:</b> $${s.totalDiscount.toFixed(2)} | <b>Impuestos:</b> $${s.totalTax.toFixed(2)}</div>
       <div class="row"><b>Por método:</b> Efectivo $${(byMethod['Efectivo']||0).toFixed(2)} · Tarjeta $${(byMethod['Tarjeta']||0).toFixed(2)} · Transferencia $${(byMethod['Transferencia']||0).toFixed(2)} · Otro $${(byMethod['Otro']||0).toFixed(2)}</div>
       </body></html>`;
     const w = window.open('', '_blank', 'width=800,height=900');
-    if (!w) return;
+    if (!w) {
+      showToast('Error al imprimir');
+      return;
+    }
+    showToast('Abriendo impresión…');
     w.document.write(html); w.document.close(); w.focus(); w.print(); w.close();
   };
 
@@ -1791,6 +1712,11 @@ const Reports = () => {
   const getCustomerTypeColor = (type: string) => getCustomerTypeColorSvc(type);
 
   const getStatsForCustomer = (id: number) => getStatsForCustomerSvc(id, sales as any, customers, products);
+  const getWhatsAppLink = (phone?: string) => {
+    const digits = phoneDigitsUtil(phone);
+    if (!digits) return '';
+    return `https://wa.me/${digits.startsWith('52') ? digits : `52${digits}`}`;
+  };
 
   const recalcLevelFor = async (customer: any) => {
     try {
@@ -1977,6 +1903,28 @@ const Reports = () => {
                     {new Date(stat.lastPurchase).toLocaleDateString()}
                   </td>
                   <td style={{ padding: '15px', textAlign: 'center' }}>
+                    {getWhatsAppLink(stat.customer.phone) && (
+                      <a
+                        href={getWhatsAppLink(stat.customer.phone)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          marginRight: '8px',
+                          padding: '6px 12px',
+                          border: '1px solid #25D366',
+                          background: 'white',
+                          color: '#25D366',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: 'bold',
+                          textDecoration: 'none',
+                          display: 'inline-block',
+                        }}
+                      >
+                        WhatsApp
+                      </a>
+                    )}
                     <button 
                       onClick={() => setDetailsCustomer(stat.customer)}
                       style={{ 
@@ -2060,14 +2008,21 @@ const Reports = () => {
   );
 
   // UI principal de Reportes con tabs
+  const canUseCashSessions = !!window.electronAPI?.getCashSessions;
+  const formatSessionLabel = (session: any) => {
+    const start = new Date(session.startTime).toLocaleString('es-MX');
+    const end = session.endTime ? new Date(session.endTime).toLocaleString('es-MX') : 'Abierta';
+    return `#${session.id} · ${start} → ${end}`;
+  };
+
   return (
     <div style={{ padding: 20 }}>
       <h1>📈 Reportes</h1>
       {/* Filtros rápidos */}
       <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:12 }}>
-        <input type="date" value={dateRange.startDate} onChange={e=> setDateRange(v=> ({...v, startDate: e.target.value}))} />
+        <input type="date" value={dateRange.startDate} onChange={e=> updateStartDate(e.target.value)} />
         <span>→</span>
-        <input type="date" value={dateRange.endDate} onChange={e=> setDateRange(v=> ({...v, endDate: e.target.value}))} />
+        <input type="date" value={dateRange.endDate} onChange={e=> updateEndDate(e.target.value)} />
         <select value={paymentFilter} onChange={e=> setPaymentFilter(e.target.value as any)}>
           <option>Todos</option>
           <option>Efectivo</option>
@@ -2079,11 +2034,38 @@ const Reports = () => {
         <button onClick={()=> setQuickRange('7d')}>7 días</button>
         <button onClick={()=> setQuickRange('30d')}>30 días</button>
         <button onClick={()=> setQuickRange('mes')}>Este mes</button>
+        <label style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span>Sesión de caja</span>
+          <select
+            value={String(selectedCashSessionId)}
+            onChange={(e) => {
+              if (!canUseCashSessions) {
+                showToast('IPC no disponible');
+                return;
+              }
+              const next = e.target.value === 'all' ? 'all' : Number(e.target.value);
+              setSelectedCashSessionId(Number.isFinite(next as number) ? (next as number) : 'all');
+            }}
+            disabled={!canUseCashSessions}
+          >
+            <option value="all">Todas</option>
+            {cashSessions.map((session:any) => (
+              <option key={session.id} value={session.id}>{formatSessionLabel(session)}</option>
+            ))}
+          </select>
+        </label>
+        <button onClick={clearFilters}>Limpiar filtros</button>
         <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
-          <button onClick={exportSalesCSV}>Exportar ventas</button>
-          <button onClick={printReport}>Imprimir</button>
+          <button onClick={exportSalesCSV} disabled={isLoading || isInvalidRange}>Exportar ventas</button>
+          <button onClick={printReport} disabled={isLoading || isInvalidRange}>Imprimir</button>
         </div>
       </div>
+      {selectedCashSessionId !== 'all' && (
+        <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
+          Filtrando por sesión #{selectedCashSessionId}
+        </div>
+      )}
+      {isLoading && <div style={{ marginBottom: 12, color: '#666' }}>Cargando…</div>}
       {/* Tabs */}
       <div style={{ display:'flex', gap:6, marginBottom:0 }}>
         <button style={tabStyle('general')} onClick={()=> setActiveTab('general')}>General</button>
@@ -2103,7 +2085,9 @@ const Reports = () => {
 type CustomerDetailsModalProps = { customer: any; onClose: () => void; stats: any };
 const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModalProps) => {
   const phoneDigits = phoneDigitsUtil(customer.phone);
-  const waLink = phoneDigits ? `https://wa.me/${phoneDigits}` : '';
+  const waLink = phoneDigits
+    ? `https://wa.me/${phoneDigits.startsWith('52') ? phoneDigits : `52${phoneDigits}`}`
+    : '';
   const telLink = customer.phone ? `tel:${customer.phone}` : '';
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
@@ -2197,7 +2181,7 @@ function App() {
       case 'products':
         return (
           <AccessGate area="products">
-            <Products />
+            <ProductosPage />
           </AccessGate>
         );
       case 'inventory':

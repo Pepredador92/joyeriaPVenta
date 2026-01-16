@@ -17,11 +17,6 @@ export type CustomerUpdateInput = Partial<Omit<Customer, 'id' | 'createdAt' | 'u
 
 const ALLOWED_DISCOUNT: Customer['discountLevel'][] = ['Bronze', 'Silver', 'Gold', 'Platinum'];
 
-export async function loadCustomers(): Promise<Customer[]> {
-  if (!(window as any).electronAPI?.getCustomers) return [];
-  return (await (window as any).electronAPI.getCustomers()) as Customer[];
-}
-
 export function filterCustomers(customers: Customer[], query: string): Customer[] {
   const q = (query || '').trim().toLowerCase();
   if (!q) return customers;
@@ -35,9 +30,9 @@ export function filterCustomers(customers: Customer[], query: string): Customer[
   });
 }
 
-// Búsqueda en clientes usando capa de dominio: carga via IPC y filtra por nombre/email/teléfono (y adicionalmente por ID)
-export async function searchCustomers(query: string): Promise<Customer[]> {
-  const all = await loadCustomers();
+// Búsqueda local en clientes (filtro por nombre/email/teléfono y adicionalmente por ID)
+export function searchCustomers(customers: Customer[], query: string): Customer[] {
+  const all = customers;
   const base = filterCustomers(all, query);
   const q = (query || '').trim();
   if (!q) return base.slice(0, 50);
@@ -63,61 +58,6 @@ export function validateCustomer(input: Partial<Customer>): { ok: boolean; error
   if (discount && !ALLOWED_DISCOUNT.includes(discount)) errors.discountLevel = 'Nivel de descuento inválido';
 
   return { ok: Object.keys(errors).length === 0, errors };
-}
-
-function nowISO() {
-  return new Date().toISOString();
-}
-
-export async function createCustomer(input: CustomerCreateInput): Promise<Customer> {
-  const { ok, errors } = validateCustomer(input);
-  if (!ok) {
-    const err = new Error('VALIDATION_ERROR');
-    (err as any).fields = errors;
-    throw err;
-  }
-  const payload: CustomerCreateInput = {
-    name: (input.name || '').trim(),
-    email: input.email?.trim() || undefined,
-    phone: input.phone?.trim() || undefined,
-    alternatePhone: input.alternatePhone?.trim() || undefined,
-    address: input.address?.trim() || undefined,
-    discountLevel: input.discountLevel || 'Bronze',
-    birthDate: input.birthDate,
-    gender: input.gender,
-    occupation: input.occupation,
-    customerType: input.customerType || 'Particular',
-    referredBy: input.referredBy,
-    preferredContact: input.preferredContact,
-    preferredCategories: input.preferredCategories,
-    budgetRange: input.budgetRange,
-    specialOccasions: input.specialOccasions,
-    notes: input.notes,
-    tags: input.tags,
-    isActive: input.isActive ?? true,
-    createdAt: nowISO(),
-    updatedAt: nowISO(),
-  } as any;
-  return await (window as any).electronAPI.createCustomer(payload);
-}
-
-export async function updateCustomer(id: number, input: CustomerUpdateInput): Promise<Customer | null> {
-  const { ok, errors } = validateCustomer({ ...input, name: input.name ?? 'x' });
-  // Para update permitimos no enviar name, por eso ponemos dummy 'x' arriba; quitamos error si no venía name.
-  if (!ok) {
-    if (input.name === undefined) delete (errors as any).name;
-    if (Object.keys(errors).length) {
-      const err = new Error('VALIDATION_ERROR');
-      (err as any).fields = errors;
-      throw err;
-    }
-  }
-  const patch: CustomerUpdateInput = { ...input };
-  return await (window as any).electronAPI.updateCustomer(id, patch);
-}
-
-export async function deleteCustomer(id: number): Promise<boolean> {
-  return await (window as any).electronAPI.deleteCustomer(id);
 }
 
 // Util: color por tipo de cliente
