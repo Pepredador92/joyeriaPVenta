@@ -60,6 +60,24 @@ export const ConfiguracionPage: React.FC = () => {
   const [levelsResult, setLevelsResult] = useState<{ updated: number; examined: number } | null>(null);
   const [rules, setRules] = useState<{ criteria: 'amount' | 'purchases'; thresholds: { Bronze: number; Silver: number; Gold: number; Platinum: number }; periodMonths?: number }>({ criteria: 'amount', thresholds: { Bronze: 0, Silver: 15000, Gold: 50000, Platinum: 100000 } });
   const [savingRules, setSavingRules] = useState(false);
+  const [levelWizardStep, setLevelWizardStep] = useState<1 | 2 | 3>(1);
+  const [levelDraft, setLevelDraft] = useState({
+    name: '',
+    discount: 10,
+    ruleType: 'amount' as 'amount' | 'purchases',
+    minSpend: 0,
+    minPurchases: 0,
+    periodDays: 180,
+    priority: 'highest' as 'highest' | 'self',
+  });
+  const [levelTouched, setLevelTouched] = useState({
+    name: false,
+    discount: false,
+    minSpend: false,
+    minPurchases: false,
+    periodDays: false,
+    priority: false,
+  });
 
   // Toast general
   const [toast, setToast] = useState<string | null>(null);
@@ -339,6 +357,27 @@ export const ConfiguracionPage: React.FC = () => {
     }
   };
 
+  const levelErrors = {
+    name: levelDraft.name.trim() ? '' : 'Escribe un nombre para identificar el nivel.',
+    discount: Number.isFinite(levelDraft.discount) && levelDraft.discount >= 0 && levelDraft.discount <= 100
+      ? ''
+      : 'El descuento debe estar entre 0 y 100.',
+    minSpend: levelDraft.minSpend >= 0 ? '' : 'El gasto mínimo no puede ser negativo.',
+    minPurchases: levelDraft.minPurchases >= 0 ? '' : 'El número de compras no puede ser negativo.',
+    periodDays: levelDraft.periodDays >= 1 ? '' : 'El periodo debe ser de al menos 1 día.',
+    priority: levelDraft.priority ? '' : 'Selecciona una prioridad.',
+  };
+  const step1Valid = !levelErrors.name && !levelErrors.discount;
+  const step2Valid = levelDraft.ruleType === 'amount'
+    ? !levelErrors.minSpend && !levelErrors.periodDays
+    : !levelErrors.minPurchases && !levelErrors.periodDays;
+  const step3Valid = !levelErrors.priority;
+  const canGoNext = (levelWizardStep === 1 && step1Valid) || (levelWizardStep === 2 && step2Valid);
+  const canSaveLevel = step1Valid && step2Valid && step3Valid;
+  const summaryCondition = levelDraft.ruleType === 'amount'
+    ? `gasta al menos ${currency.format(levelDraft.minSpend)}`
+    : `compra al menos ${levelDraft.minPurchases} veces`;
+
   return (
     <div style={{ padding: 20 }}>
       <h1>⚙️ Configuración</h1>
@@ -426,6 +465,202 @@ export const ConfiguracionPage: React.FC = () => {
 
           {tab === 'clientes' && (
             <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: 16, maxWidth: 720 }}>
+              <h3 style={{ marginTop: 0 }}>Crear nuevo nivel</h3>
+              <p style={{ marginTop: 6, color: '#666' }}>Configura un nivel paso a paso. Usa frases simples y ejemplos para evitar confusiones.</p>
+              <details style={{ marginTop: 10, background: '#fafafa', border: '1px solid #eee', borderRadius: 8, padding: '10px 12px' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>¿Cómo funciona?</summary>
+                <ul style={{ margin: '8px 0 0 18px', color: '#555' }}>
+                  <li>El sistema revisa el historial del cliente.</li>
+                  <li>Se toma en cuenta el periodo de evaluación.</li>
+                  <li>Si cumple la regla, se asigna el nivel.</li>
+                  <li>Si cumple varios niveles, se usa la prioridad.</li>
+                </ul>
+              </details>
+
+              <div style={{ marginTop: 16, padding: 14, border: '1px solid #e6e9ef', borderRadius: 10, background: '#fbfcff' }}>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>
+                  Paso {levelWizardStep}/3 · {levelWizardStep === 1 ? 'Nombre y descuento' : levelWizardStep === 2 ? 'Cuándo aplica el nivel' : 'Prioridad y resumen'}
+                </div>
+
+                {levelWizardStep === 1 && (
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <label>Nombre del nivel</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: Bronce, Plata, VIP"
+                        value={levelDraft.name}
+                        onChange={(e) => {
+                          setLevelDraft({ ...levelDraft, name: e.target.value });
+                          setLevelTouched((prev) => ({ ...prev, name: true }));
+                        }}
+                      />
+                      <div style={{ fontSize: 12, color: '#667085' }}>Será el nombre visible para el equipo y el cliente.</div>
+                      {levelTouched.name && levelErrors.name && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.name}</div>}
+                    </div>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <label>Descuento (%)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={levelDraft.discount}
+                        onChange={(e) => {
+                          setLevelDraft({ ...levelDraft, discount: Number(e.target.value) });
+                          setLevelTouched((prev) => ({ ...prev, discount: true }));
+                        }}
+                      />
+                      <div style={{ fontSize: 12, color: '#667085' }}>Ejemplo: 10% significa que pagará 10% menos.</div>
+                      {levelTouched.discount && levelErrors.discount && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.discount}</div>}
+                    </div>
+                  </div>
+                )}
+
+                {levelWizardStep === 2 && (
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <label>Regla principal</label>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="radio"
+                            name="ruleType"
+                            checked={levelDraft.ruleType === 'amount'}
+                            onChange={() => setLevelDraft({ ...levelDraft, ruleType: 'amount' })}
+                          />
+                          Por gasto
+                        </label>
+                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="radio"
+                            name="ruleType"
+                            checked={levelDraft.ruleType === 'purchases'}
+                            onChange={() => setLevelDraft({ ...levelDraft, ruleType: 'purchases' })}
+                          />
+                          Por número de compras
+                        </label>
+                      </div>
+                    </div>
+
+                    {levelDraft.ruleType === 'amount' ? (
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        <label>Gasto mínimo</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={levelDraft.minSpend}
+                          onChange={(e) => {
+                            setLevelDraft({ ...levelDraft, minSpend: Number(e.target.value) });
+                            setLevelTouched((prev) => ({ ...prev, minSpend: true }));
+                          }}
+                        />
+                        <div style={{ fontSize: 12, color: '#667085' }}>Si el cliente gasta al menos $X (en el periodo), entra a este nivel.</div>
+                        {levelTouched.minSpend && levelErrors.minSpend && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.minSpend}</div>}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        <label>Número mínimo de compras</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={levelDraft.minPurchases}
+                          onChange={(e) => {
+                            setLevelDraft({ ...levelDraft, minPurchases: Number(e.target.value) });
+                            setLevelTouched((prev) => ({ ...prev, minPurchases: true }));
+                          }}
+                        />
+                        <div style={{ fontSize: 12, color: '#667085' }}>Si compra al menos N veces (en el periodo), entra a este nivel.</div>
+                        {levelTouched.minPurchases && levelErrors.minPurchases && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.minPurchases}</div>}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <label>Periodo de evaluación (días)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={levelDraft.periodDays}
+                        onChange={(e) => {
+                          setLevelDraft({ ...levelDraft, periodDays: Number(e.target.value) });
+                          setLevelTouched((prev) => ({ ...prev, periodDays: true }));
+                        }}
+                      />
+                      <div style={{ fontSize: 12, color: '#667085' }}>Contamos compras/gasto solo dentro de los últimos X días.</div>
+                      {levelTouched.periodDays && levelErrors.periodDays && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.periodDays}</div>}
+                    </div>
+                  </div>
+                )}
+
+                {levelWizardStep === 3 && (
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <label>¿Qué nivel gana si se cumplen varios?</label>
+                      <select
+                        value={levelDraft.priority}
+                        onChange={(e) => {
+                          setLevelDraft({ ...levelDraft, priority: e.target.value as 'highest' | 'self' });
+                          setLevelTouched((prev) => ({ ...prev, priority: true }));
+                        }}
+                      >
+                        <option value="highest">Más alto gana (recomendado)</option>
+                        <option value="self">Este nivel tiene prioridad sobre otros</option>
+                      </select>
+                      {levelTouched.priority && levelErrors.priority && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.priority}</div>}
+                    </div>
+                    <div style={{ padding: 12, borderRadius: 8, border: '1px solid #e6e9ef', background: '#fff' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 6 }}>Resumen</div>
+                      <div style={{ color: '#444' }}>
+                        El nivel <strong>{levelDraft.name || '—'}</strong> da <strong>{levelDraft.discount || 0}%</strong> y aplica cuando {summaryCondition}
+                        {' '}en los últimos <strong>{Math.max(1, levelDraft.periodDays)} días</strong>.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+                  <button
+                    type="button"
+                    onClick={() => setLevelWizardStep((prev) => (prev > 1 ? ((prev - 1) as 1 | 2 | 3) : prev))}
+                    disabled={levelWizardStep === 1}
+                  >
+                    Atrás
+                  </button>
+                  {levelWizardStep < 3 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (levelWizardStep === 1) {
+                          setLevelTouched((prev) => ({ ...prev, name: true, discount: true }));
+                        }
+                        if (levelWizardStep === 2) {
+                          setLevelTouched((prev) => ({ ...prev, minSpend: true, minPurchases: true, periodDays: true }));
+                        }
+                        if (canGoNext) {
+                          setLevelWizardStep((prev) => ((prev + 1) as 1 | 2 | 3));
+                        }
+                      }}
+                      disabled={!canGoNext}
+                    >
+                      Siguiente
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLevelTouched((prev) => ({ ...prev, priority: true, name: true, discount: true, minSpend: true, minPurchases: true, periodDays: true }));
+                        if (!canSaveLevel) return;
+                        setToast('Nivel guardado');
+                        setTimeout(() => setToast(null), 1200);
+                      }}
+                      disabled={!canSaveLevel}
+                    >
+                      Guardar nivel
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <hr style={{ margin: '20px 0' }} />
               <h3>Actualizar niveles de clientes</h3>
               <p>Calcula el nivel por gasto histórico y ajusta el descuento (Bronze/Silver/Gold/Platinum).</p>
               <button onClick={onUpdateCustomerLevels} disabled={updatingLevels}>{updatingLevels ? 'Procesando…' : 'Actualizar niveles'}</button>
