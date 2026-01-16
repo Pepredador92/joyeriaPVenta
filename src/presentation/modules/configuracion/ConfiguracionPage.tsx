@@ -68,7 +68,6 @@ export const ConfiguracionPage: React.FC = () => {
     minSpend: 0,
     minPurchases: 0,
     periodDays: 180,
-    priority: 'highest' as 'highest' | 'self',
   });
   const [levelTouched, setLevelTouched] = useState({
     name: false,
@@ -76,7 +75,6 @@ export const ConfiguracionPage: React.FC = () => {
     minSpend: false,
     minPurchases: false,
     periodDays: false,
-    priority: false,
   });
 
   // Toast general
@@ -357,26 +355,61 @@ export const ConfiguracionPage: React.FC = () => {
     }
   };
 
+  const levelKeyFromName = (rawName: string) => {
+    const key = rawName.trim().toLowerCase();
+    const map: Record<string, 'Bronze' | 'Silver' | 'Gold' | 'Platinum'> = {
+      bronce: 'Bronze',
+      bronze: 'Bronze',
+      plata: 'Silver',
+      silver: 'Silver',
+      oro: 'Gold',
+      gold: 'Gold',
+      platino: 'Platinum',
+      platinum: 'Platinum',
+      vip: 'Platinum',
+    };
+    return map[key] || null;
+  };
   const levelErrors = {
-    name: levelDraft.name.trim() ? '' : 'Escribe un nombre para identificar el nivel.',
+    name: !levelDraft.name.trim()
+      ? 'Escribe un nombre para identificar el nivel.'
+      : levelKeyFromName(levelDraft.name)
+        ? ''
+        : 'Usa Bronce, Plata, Oro o VIP para mantener compatibilidad.',
     discount: Number.isFinite(levelDraft.discount) && levelDraft.discount >= 0 && levelDraft.discount <= 100
       ? ''
       : 'El descuento debe estar entre 0 y 100.',
     minSpend: levelDraft.minSpend >= 0 ? '' : 'El gasto mínimo no puede ser negativo.',
     minPurchases: levelDraft.minPurchases >= 0 ? '' : 'El número de compras no puede ser negativo.',
     periodDays: levelDraft.periodDays >= 1 ? '' : 'El periodo debe ser de al menos 1 día.',
-    priority: levelDraft.priority ? '' : 'Selecciona una prioridad.',
   };
   const step1Valid = !levelErrors.name && !levelErrors.discount;
   const step2Valid = levelDraft.ruleType === 'amount'
     ? !levelErrors.minSpend && !levelErrors.periodDays
     : !levelErrors.minPurchases && !levelErrors.periodDays;
-  const step3Valid = !levelErrors.priority;
   const canGoNext = (levelWizardStep === 1 && step1Valid) || (levelWizardStep === 2 && step2Valid);
-  const canSaveLevel = step1Valid && step2Valid && step3Valid;
+  const canSaveLevel = step1Valid && step2Valid;
   const summaryCondition = levelDraft.ruleType === 'amount'
     ? `gasta al menos ${currency.format(levelDraft.minSpend)}`
     : `compra al menos ${levelDraft.minPurchases} veces`;
+  const resetLevelWizard = () => {
+    setLevelWizardStep(1);
+    setLevelDraft({
+      name: '',
+      discount: 10,
+      ruleType: 'amount',
+      minSpend: 0,
+      minPurchases: 0,
+      periodDays: 180,
+    });
+    setLevelTouched({
+      name: false,
+      discount: false,
+      minSpend: false,
+      minPurchases: false,
+      periodDays: false,
+    });
+  };
 
   return (
     <div style={{ padding: 20 }}>
@@ -488,14 +521,14 @@ export const ConfiguracionPage: React.FC = () => {
                       <label>Nombre del nivel</label>
                       <input
                         type="text"
-                        placeholder="Ej: Bronce, Plata, VIP"
+                        placeholder="Ej: Bronce, Plata, Oro o VIP"
                         value={levelDraft.name}
                         onChange={(e) => {
                           setLevelDraft({ ...levelDraft, name: e.target.value });
                           setLevelTouched((prev) => ({ ...prev, name: true }));
                         }}
                       />
-                      <div style={{ fontSize: 12, color: '#667085' }}>Será el nombre visible para el equipo y el cliente.</div>
+                      <div style={{ fontSize: 12, color: '#667085' }}>Usa Bronce, Plata, Oro o VIP para mantener compatibilidad.</div>
                       {levelTouched.name && levelErrors.name && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.name}</div>}
                     </div>
                     <div style={{ display: 'grid', gap: 6 }}>
@@ -593,19 +626,11 @@ export const ConfiguracionPage: React.FC = () => {
 
                 {levelWizardStep === 3 && (
                   <div style={{ display: 'grid', gap: 12 }}>
-                    <div style={{ display: 'grid', gap: 6 }}>
-                      <label>¿Qué nivel gana si se cumplen varios?</label>
-                      <select
-                        value={levelDraft.priority}
-                        onChange={(e) => {
-                          setLevelDraft({ ...levelDraft, priority: e.target.value as 'highest' | 'self' });
-                          setLevelTouched((prev) => ({ ...prev, priority: true }));
-                        }}
-                      >
-                        <option value="highest">Más alto gana (recomendado)</option>
-                        <option value="self">Este nivel tiene prioridad sobre otros</option>
-                      </select>
-                      {levelTouched.priority && levelErrors.priority && <div style={{ fontSize: 12, color: '#d32f2f' }}>{levelErrors.priority}</div>}
+                    <div style={{ padding: 12, borderRadius: 8, border: '1px solid #e6e9ef', background: '#f9fafb' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>Prioridad</div>
+                      <div style={{ color: '#555', fontSize: 13 }}>
+                        Si un cliente cumple varios niveles, se asigna el más alto. (Este comportamiento es automático y no se cambia aquí.)
+                      </div>
                     </div>
                     <div style={{ padding: 12, borderRadius: 8, border: '1px solid #e6e9ef', background: '#fff' }}>
                       <div style={{ fontWeight: 600, marginBottom: 6 }}>Resumen</div>
@@ -647,16 +672,71 @@ export const ConfiguracionPage: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        setLevelTouched((prev) => ({ ...prev, priority: true, name: true, discount: true, minSpend: true, minPurchases: true, periodDays: true }));
+                        setLevelTouched((prev) => ({ ...prev, name: true, discount: true, minSpend: true, minPurchases: true, periodDays: true }));
                         if (!canSaveLevel) return;
-                        setToast('Nivel guardado');
-                        setTimeout(() => setToast(null), 1200);
+                        const levelKey = levelKeyFromName(levelDraft.name);
+                        if (!levelKey) {
+                          setToast('Usa Bronce, Plata, Oro o VIP para guardar este nivel.');
+                          setTimeout(() => setToast(null), 1400);
+                          return;
+                        }
+                        const persistLevel = async () => {
+                          const api = (window as any).electronAPI;
+                          if (!api?.updateSetting) {
+                            setToast('IPC no disponible');
+                            setTimeout(() => setToast(null), 1400);
+                            return;
+                          }
+                          let currentLevels: Record<string, number> = {};
+                          if (api?.getSettings) {
+                            try {
+                              const rows = await api.getSettings();
+                              const map = new Map((rows || []).map((r: any) => [r.key, r.value] as const));
+                              const raw = map.get('discountLevels') || map.get('discount_levels');
+                              if (raw) currentLevels = JSON.parse(raw);
+                            } catch {}
+                          }
+                          if (!Object.keys(currentLevels || {}).length) {
+                            currentLevels = { ...disc };
+                          }
+                          const cleanedDiscount = clamp(Number(levelDraft.discount));
+                          const nextLevels = { ...currentLevels, [levelKey]: cleanedDiscount };
+                          await api.updateSetting('discountLevels', JSON.stringify(nextLevels));
+                          await api.updateSetting('discount_levels', JSON.stringify(nextLevels));
+                          try { localStorage.setItem('discountLevels', JSON.stringify(nextLevels)); } catch {}
+                          setDisc((prev) => ({ ...prev, [levelKey]: cleanedDiscount }));
+
+                          const nextRules = normalizeCustomerLevelRules({
+                            criteria: levelDraft.ruleType,
+                            thresholds: {
+                              ...rules.thresholds,
+                              [levelKey]: levelDraft.ruleType === 'amount' ? Math.max(0, levelDraft.minSpend) : Math.max(0, levelDraft.minPurchases),
+                            },
+                            periodMonths: levelDraft.ruleType === 'purchases'
+                              ? Math.max(1, Math.round(levelDraft.periodDays / 30))
+                              : undefined,
+                          });
+                          await api.updateSetting('customerLevelRules', JSON.stringify(nextRules));
+                          setRules(nextRules);
+                          setToast('Nivel guardado');
+                          setTimeout(() => setToast(null), 1200);
+                          resetLevelWizard();
+                        };
+                        persistLevel().catch(() => {
+                          setToast('No se pudo guardar el nivel.');
+                          setTimeout(() => setToast(null), 1400);
+                        });
                       }}
                       disabled={!canSaveLevel}
                     >
                       Guardar nivel
                     </button>
                   )}
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={resetLevelWizard} style={{ background: '#fff', border: '1px solid #ddd' }}>
+                    Cancelar
+                  </button>
                 </div>
               </div>
 
