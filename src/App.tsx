@@ -712,8 +712,20 @@ const CashSession = () => {
         loadCashSessions();
         loadSales();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving cash session:', error);
+      if (error?.message === 'CASH_SESSION_ALREADY_OPEN') {
+        alert('Ya hay una sesión abierta. Ciérrala antes de crear otra.');
+        return;
+      }
+      if (error?.message === 'CASH_SESSION_ALREADY_CLOSED') {
+        alert('Esta sesión ya está cerrada.');
+        return;
+      }
+      if (error?.message === 'CASH_SESSION_NOT_FOUND') {
+        alert('Sesión no encontrada. Refresca la lista.');
+        return;
+      }
       alert('Error al guardar la sesión de caja');
     }
   };
@@ -880,7 +892,17 @@ const CashSession = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
         <h1>💰 Corte de Caja</h1>
         <button 
-          onClick={() => { if (openSession) return; setShowAddForm(true); setEditingSession(null); setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' }); setShowCashCount(false); setCashCount({}); }}
+          onClick={() => {
+            if (openSession) {
+              alert('Ya hay una sesión abierta. Ciérrala antes de crear otra.');
+              return;
+            }
+            setShowAddForm(true);
+            setEditingSession(null);
+            setNewSession({ initialAmount: 0, finalAmount: 0, notes: '' });
+            setShowCashCount(false);
+            setCashCount({});
+          }}
           style={{ 
             background: openSession ? '#9e9e9e' : '#4caf50', 
             color: '#fff', 
