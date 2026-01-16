@@ -117,6 +117,12 @@ export const ClientesPage: React.FC = () => {
     await reload();
   };
 
+  const getWhatsAppLink = (phone?: string) => {
+    const digits = (phone || '').replace(/\D+/g, '');
+    if (!digits) return '';
+    return `https://wa.me/${digits.startsWith('52') ? digits : `52${digits}`}`;
+  };
+
   return (
     <div style={{ padding: 16 }}>
       <h1>👥 Clientes</h1>
@@ -191,6 +197,26 @@ export const ClientesPage: React.FC = () => {
                 <td style={{ padding:8 }}>{c.discountLevel}</td>
                 <td style={{ padding:8 }}>{c.customerType||'Particular'}</td>
                 <td style={{ padding:8, textAlign:'center' }}>
+                  {getWhatsAppLink(c.phone) && (
+                    <a
+                      href={getWhatsAppLink(c.phone)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        marginRight:8,
+                        padding:'6px 10px',
+                        border:'1px solid #25D366',
+                        background:'#fff',
+                        color:'#25D366',
+                        borderRadius:6,
+                        textDecoration:'none',
+                        fontSize:12,
+                        fontWeight:'bold'
+                      }}
+                    >
+                      WhatsApp
+                    </a>
+                  )}
                   <button onClick={()=> onEdit(c)} style={{ marginRight:8 }}>Editar</button>
                   <button onClick={()=> onDelete(c.id)}>Eliminar</button>
                 </td>

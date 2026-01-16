@@ -1712,6 +1712,11 @@ const Reports = () => {
   const getCustomerTypeColor = (type: string) => getCustomerTypeColorSvc(type);
 
   const getStatsForCustomer = (id: number) => getStatsForCustomerSvc(id, sales as any, customers, products);
+  const getWhatsAppLink = (phone?: string) => {
+    const digits = phoneDigitsUtil(phone);
+    if (!digits) return '';
+    return `https://wa.me/${digits.startsWith('52') ? digits : `52${digits}`}`;
+  };
 
   const recalcLevelFor = async (customer: any) => {
     try {
@@ -1898,6 +1903,28 @@ const Reports = () => {
                     {new Date(stat.lastPurchase).toLocaleDateString()}
                   </td>
                   <td style={{ padding: '15px', textAlign: 'center' }}>
+                    {getWhatsAppLink(stat.customer.phone) && (
+                      <a
+                        href={getWhatsAppLink(stat.customer.phone)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          marginRight: '8px',
+                          padding: '6px 12px',
+                          border: '1px solid #25D366',
+                          background: 'white',
+                          color: '#25D366',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: 'bold',
+                          textDecoration: 'none',
+                          display: 'inline-block',
+                        }}
+                      >
+                        WhatsApp
+                      </a>
+                    )}
                     <button 
                       onClick={() => setDetailsCustomer(stat.customer)}
                       style={{ 
@@ -2058,7 +2085,9 @@ const Reports = () => {
 type CustomerDetailsModalProps = { customer: any; onClose: () => void; stats: any };
 const CustomerDetailsModal = ({ customer, onClose, stats }: CustomerDetailsModalProps) => {
   const phoneDigits = phoneDigitsUtil(customer.phone);
-  const waLink = phoneDigits ? `https://wa.me/${phoneDigits}` : '';
+  const waLink = phoneDigits
+    ? `https://wa.me/${phoneDigits.startsWith('52') ? phoneDigits : `52${phoneDigits}`}`
+    : '';
   const telLink = customer.phone ? `tel:${customer.phone}` : '';
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
