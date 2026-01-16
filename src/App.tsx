@@ -1377,26 +1377,26 @@ const Reports = () => {
   const updateStartDate = (value: string) => {
     setDateRange(prev => {
       const startDate = value;
-      const endDate = value > prev.endDate ? value : prev.endDate;
+      const wasInvalid = startDate > prev.endDate;
+      const endDate = wasInvalid ? startDate : prev.endDate;
+      if (wasInvalid) showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
       return { startDate, endDate };
     });
-    if (value > dateRange.endDate) {
-      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
-    }
   };
 
   const updateEndDate = (value: string) => {
     setDateRange(prev => {
       const endDate = value;
-      const startDate = value < prev.startDate ? value : prev.startDate;
+      const wasInvalid = endDate < prev.startDate;
+      const startDate = wasInvalid ? endDate : prev.startDate;
+      if (wasInvalid) showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
       return { startDate, endDate };
     });
-    if (value < dateRange.startDate) {
-      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
-    }
   };
 
   const clearFilters = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    setDateRange({ startDate: today, endDate: today });
     setQuickRange('hoy');
     setPaymentFilter('Todos');
     setActiveTab('general');
