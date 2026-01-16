@@ -785,8 +785,23 @@ const CashSession = () => {
   const setDenom = (den:number, val:number)=> {
     setCashCount(prev=> ({ ...prev, [String(den)]: Math.max(0, Math.floor(val)||0) }));
   };
-  const useCountAsFinal = ()=> {
-    setNewSession(s=> ({ ...s, finalAmount: Number(countedCashTotal.toFixed(2)) }));
+  const useCountAsFinal = () => {
+    const total = Number(countedCashTotal.toFixed(2));
+    setNewSession(s=> ({ ...s, finalAmount: total }));
+    if (!openSession || openSession.status !== 'Abierta') {
+      alert('No hay sesión abierta.');
+      return;
+    }
+    if (!window.electronAPI?.updateCashSession) {
+      alert('IPC no disponible');
+      return;
+    }
+    window.electronAPI.updateCashSession(openSession.id, { cashCount, cashCountTotal: total })
+      .then(loadCashSessions)
+      .catch((error: any) => {
+        console.error('Error saving cash count:', error);
+        alert('No se pudo guardar el arqueo');
+      });
   };
   const resetMovementForm = () => {
     setMovementType('Entrada');
@@ -875,6 +890,13 @@ const CashSession = () => {
   const printSession = (session:any)=> {
     const s = summarizeSession(session);
     const lines = getSessionSales(session).map((v:any)=> `• ${new Date(v.createdAt).toLocaleString('es-MX')} — ${v.paymentMethod||'Otro'} — ${formatMoney(v.total)}`).join('<br/>');
+    const cashCountRows = Object.entries(session.cashCount || {})
+      .filter(([, qty]) => Number(qty) > 0)
+      .map(([den, qty]) => `${den}: ${qty}`)
+      .join('<br/>');
+    const cashCountSection = session.cashCountTotal !== undefined
+      ? `<hr/><div><b>Arqueo</b></div><div>${cashCountRows || 'Sin denominaciones registradas'}</div><div><b>Total:</b> ${formatMoney(session.cashCountTotal || 0)}</div>`
+      : '<hr/><div><b>Arqueo</b></div><div>Sin arqueo guardado</div>';
     const html = `
       <html><head><title>Corte de Caja</title>
       <style>body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding:16px} h2{margin:0 0 8px} .row{margin:4px 0}</style>
@@ -893,6 +915,7 @@ const CashSession = () => {
       <div class="row"><b>Efectivo esperado:</b> ${formatMoney(s.expectedCash)}</div>
       ${session.finalAmount ? `<div class="row"><b>Efectivo reportado:</b> ${formatMoney(session.finalAmount)}</div>` : ''}
       ${session.finalAmount ? `<div class="row"><b>Diferencia:</b> ${formatMoney((session.finalAmount||0) - s.expectedCash)}</div>` : ''}
+      ${cashCountSection}
       <hr/>
       <div><b>Ventas</b></div>
       <div>${lines || 'Sin ventas'}</div>
@@ -1121,6 +1144,22 @@ const CashSession = () => {
                         <div>Total contado: <strong>{formatMoney(countedCashTotal)}</strong></div>
                         <button type="button" onClick={useCountAsFinal} style={{ padding:'6px 10px', border:'1px solid #4caf50', background:'#fff', color:'#4caf50', borderRadius:6, cursor:'pointer' }}>Usar como monto final</button>
                       </div>
+                      <div style={{ marginTop:8 }}>
+                        {(denominations || []).filter(den => (cashCount[String(den)] || 0) > 0).length === 0 ? (
+                          <div style={{ color:'#666' }}>Sin denominaciones registradas</div>
+                        ) : (
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:6 }}>
+                            {(denominations || [])
+                              .filter(den => (cashCount[String(den)] || 0) > 0)
+                              .map(den => (
+                                <React.Fragment key={den}>
+                                  <div>{den >= 1 ? `$${den}` : `${den}¢`}</div>
+                                  <div>{cashCount[String(den)]}</div>
+                                </React.Fragment>
+                              ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1310,6 +1349,30 @@ const CashSession = () => {
               <div style={{ marginTop:6, fontWeight:'bold', color:(detailSession.finalAmount - s.expectedCash)===0? '#4caf50' : (detailSession.finalAmount - s.expectedCash)>0 ? '#2e7d32' : '#d32f2f' }}>
                 Diferencia: ${(detailSession.finalAmount - s.expectedCash).toFixed(2)}
               </div>
+            </div>
+            <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff', marginBottom:12 }}>
+              <div style={{ fontWeight:600, marginBottom:8 }}>🧮 Arqueo guardado</div>
+              {detailSession.cashCountTotal !== undefined ? (
+                <>
+                  <div style={{ marginBottom:8 }}>Total: <strong>${formatMoney(detailSession.cashCountTotal || 0)}</strong></div>
+                  {(Object.entries(detailSession.cashCount || {}).filter(([, qty]) => Number(qty) > 0).length === 0) ? (
+                    <div style={{ color:'#666' }}>Sin denominaciones registradas</div>
+                  ) : (
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:6 }}>
+                      {Object.entries(detailSession.cashCount || {})
+                        .filter(([, qty]) => Number(qty) > 0)
+                        .map(([den, qty]) => (
+                          <React.Fragment key={den}>
+                            <div>{den}</div>
+                            <div>{qty as any}</div>
+                          </React.Fragment>
+                        ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ color:'#666' }}>Sin arqueo guardado</div>
+              )}
             </div>
             <div style={{ padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
               <div style={{ fontWeight:600, marginBottom:8 }}>🧾 Ventas de la sesión</div>

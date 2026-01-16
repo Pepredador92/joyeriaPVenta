@@ -235,6 +235,8 @@ class DatabaseService {
       id: Math.max(...this.cashSessions.map(s => s.id), 0) + 1,
       ...sessionData,
       movements: [],
+      cashCount: {},
+      cashCountTotal: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -256,6 +258,12 @@ class DatabaseService {
     const nextData = { ...sessionData } as Partial<CashSession>;
     if (nextData.movements === undefined) {
       delete nextData.movements;
+    }
+    if (nextData.cashCount === undefined) {
+      delete nextData.cashCount;
+    }
+    if (nextData.cashCountTotal === undefined) {
+      delete nextData.cashCountTotal;
     }
     
     this.cashSessions[index] = {

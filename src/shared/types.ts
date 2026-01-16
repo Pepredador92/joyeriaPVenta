@@ -82,6 +82,8 @@ export interface CashSession {
   status: 'Abierta' | 'Cerrada';
   notes?: string;
   movements?: CashMovement[];
+  cashCount?: Record<string, number>;
+  cashCountTotal?: number;
   createdAt: string;
   updatedAt: string;
 }
