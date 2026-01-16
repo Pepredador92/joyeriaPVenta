@@ -1242,6 +1242,7 @@ const Reports = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('general');
+  const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<string|null>(null);
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=> setToast(null), 2500); };
   // Estado para detalles de cliente
@@ -1253,6 +1254,7 @@ const Reports = () => {
   const [paymentFilter, setPaymentFilter] = useState<'Todos'|'Efectivo'|'Tarjeta'|'Transferencia'|'Otro'>('Todos');
   const [productQuery, setProductQuery] = useState('');
   const [customerQuery, setCustomerQuery] = useState('');
+  const isInvalidRange = dateRange.startDate > dateRange.endDate;
 
   useEffect(() => {
     loadData();
@@ -1318,6 +1320,7 @@ const Reports = () => {
   };
 
   const loadData = async () => {
+    setIsLoading(true);
     try {
       if (window.electronAPI) {
         const [salesData, productsData, customersData] = await Promise.all([
@@ -1331,6 +1334,8 @@ const Reports = () => {
       }
     } catch (error) {
       console.error('Error loading data:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -1369,6 +1374,37 @@ const Reports = () => {
     }
   };
 
+  const updateStartDate = (value: string) => {
+    setDateRange(prev => {
+      const startDate = value;
+      const endDate = value > prev.endDate ? value : prev.endDate;
+      return { startDate, endDate };
+    });
+    if (value > dateRange.endDate) {
+      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+    }
+  };
+
+  const updateEndDate = (value: string) => {
+    setDateRange(prev => {
+      const endDate = value;
+      const startDate = value < prev.startDate ? value : prev.startDate;
+      return { startDate, endDate };
+    });
+    if (value < dateRange.startDate) {
+      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+    }
+  };
+
+  const clearFilters = () => {
+    setQuickRange('hoy');
+    setPaymentFilter('Todos');
+    setActiveTab('general');
+    setProductQuery('');
+    setCustomerQuery('');
+    showToast('Filtros limpiados');
+  };
+
   // Persist on changes
   useEffect(()=>{
     if (!dateRange?.startDate || !dateRange?.endDate) return;
@@ -1400,6 +1436,10 @@ const Reports = () => {
   }, [customerQuery]);
 
   const exportSalesCSV = () => {
+    if (isInvalidRange) {
+      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+      return;
+    }
     const header = ['Fecha','ID Venta','ClienteID','Método','Subtotal','Descuento','Impuesto','Total'];
     const rows = filteredSales.map((s:any)=> [
       new Date(s.createdAt).toLocaleString('es-MX'),
@@ -1419,6 +1459,7 @@ const Reports = () => {
     a.download = `reporte_ventas_${dateRange.startDate}_a_${dateRange.endDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    showToast('CSV generado');
   };
 
   const exportProductsCSV = () => {
@@ -1444,6 +1485,10 @@ const Reports = () => {
   // exportCategoriesCSV removido (no usado)
 
   const printReport = () => {
+    if (isInvalidRange) {
+      showToast('Rango inválido: la fecha inicial no puede ser mayor que la final');
+      return;
+    }
     const s = stats;
     const byMethod = filteredSales.reduce((acc:any, v:any)=> { const m = v.paymentMethod||'Otro'; acc[m]=(acc[m]||0)+(v.total||0); return acc; }, {});
     const html = `
@@ -1457,7 +1502,11 @@ const Reports = () => {
       <div class="row"><b>Por método:</b> Efectivo $${(byMethod['Efectivo']||0).toFixed(2)} · Tarjeta $${(byMethod['Tarjeta']||0).toFixed(2)} · Transferencia $${(byMethod['Transferencia']||0).toFixed(2)} · Otro $${(byMethod['Otro']||0).toFixed(2)}</div>
       </body></html>`;
     const w = window.open('', '_blank', 'width=800,height=900');
-    if (!w) return;
+    if (!w) {
+      showToast('Error al imprimir');
+      return;
+    }
+    showToast('Abriendo impresión…');
     w.document.write(html); w.document.close(); w.focus(); w.print(); w.close();
   };
 
@@ -1772,9 +1821,9 @@ const Reports = () => {
       <h1>📈 Reportes</h1>
       {/* Filtros rápidos */}
       <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:12 }}>
-        <input type="date" value={dateRange.startDate} onChange={e=> setDateRange(v=> ({...v, startDate: e.target.value}))} />
+        <input type="date" value={dateRange.startDate} onChange={e=> updateStartDate(e.target.value)} />
         <span>→</span>
-        <input type="date" value={dateRange.endDate} onChange={e=> setDateRange(v=> ({...v, endDate: e.target.value}))} />
+        <input type="date" value={dateRange.endDate} onChange={e=> updateEndDate(e.target.value)} />
         <select value={paymentFilter} onChange={e=> setPaymentFilter(e.target.value as any)}>
           <option>Todos</option>
           <option>Efectivo</option>
@@ -1786,11 +1835,13 @@ const Reports = () => {
         <button onClick={()=> setQuickRange('7d')}>7 días</button>
         <button onClick={()=> setQuickRange('30d')}>30 días</button>
         <button onClick={()=> setQuickRange('mes')}>Este mes</button>
+        <button onClick={clearFilters}>Limpiar filtros</button>
         <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
-          <button onClick={exportSalesCSV}>Exportar ventas</button>
-          <button onClick={printReport}>Imprimir</button>
+          <button onClick={exportSalesCSV} disabled={isLoading || isInvalidRange}>Exportar ventas</button>
+          <button onClick={printReport} disabled={isLoading || isInvalidRange}>Imprimir</button>
         </div>
       </div>
+      {isLoading && <div style={{ marginBottom: 12, color: '#666' }}>Cargando…</div>}
       {/* Tabs */}
       <div style={{ display:'flex', gap:6, marginBottom:0 }}>
         <button style={tabStyle('general')} onClick={()=> setActiveTab('general')}>General</button>
