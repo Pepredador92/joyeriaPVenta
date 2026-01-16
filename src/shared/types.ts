@@ -81,8 +81,17 @@ export interface CashSession {
   difference?: number;
   status: 'Abierta' | 'Cerrada';
   notes?: string;
+  movements?: CashMovement[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CashMovement {
+  id: number;
+  type: 'Entrada' | 'Salida';
+  amount: number;
+  note?: string;
+  createdAt: string;
 }
 
 export interface Setting {

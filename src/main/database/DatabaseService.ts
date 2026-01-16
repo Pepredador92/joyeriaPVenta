@@ -234,6 +234,7 @@ class DatabaseService {
     const newSession: CashSession = {
       id: Math.max(...this.cashSessions.map(s => s.id), 0) + 1,
       ...sessionData,
+      movements: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -252,10 +253,14 @@ class DatabaseService {
     if (existing.status === 'Cerrada' && attemptingClose) {
       throw new Error('CASH_SESSION_ALREADY_CLOSED');
     }
+    const nextData = { ...sessionData } as Partial<CashSession>;
+    if (nextData.movements === undefined) {
+      delete nextData.movements;
+    }
     
     this.cashSessions[index] = {
       ...existing,
-      ...sessionData,
+      ...nextData,
       updatedAt: new Date().toISOString()
     };
   await this.saveCashSessionsToDiskSafe();

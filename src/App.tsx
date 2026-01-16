@@ -629,6 +629,9 @@ const CashSession = () => {
   const [editingSession, setEditingSession] = useState<any>(null);
   const [detailSession, setDetailSession] = useState<any>(null);
   const [sessionToDelete, setSessionToDelete] = useState<any>(null);
+  const [movementType, setMovementType] = useState<'Entrada' | 'Salida'>('Entrada');
+  const [movementAmount, setMovementAmount] = useState<number>(0);
+  const [movementNote, setMovementNote] = useState('');
   const [newSession, setNewSession] = useState({
     initialAmount: 0, finalAmount: 0, notes: ''
   });
@@ -684,8 +687,11 @@ const CashSession = () => {
       count += 1;
     });
     const avg = count ? total / count : 0;
-    const expectedCash = (session.initialAmount || 0) + (byMethod['Efectivo'] || 0);
-    return { total, count, avg, totalTax, totalDiscount, byMethod, expectedCash };
+    const movements = session.movements || [];
+    const totalEntradas = movements.filter((m: any) => m.type === 'Entrada').reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
+    const totalSalidas = movements.filter((m: any) => m.type === 'Salida').reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
+    const expectedCash = (session.initialAmount || 0) + (byMethod['Efectivo'] || 0) + totalEntradas - totalSalidas;
+    return { total, count, avg, totalTax, totalDiscount, byMethod, expectedCash, totalEntradas, totalSalidas };
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -780,6 +786,43 @@ const CashSession = () => {
   };
   const useCountAsFinal = ()=> {
     setNewSession(s=> ({ ...s, finalAmount: Number(countedCashTotal.toFixed(2)) }));
+  };
+  const resetMovementForm = () => {
+    setMovementType('Entrada');
+    setMovementAmount(0);
+    setMovementNote('');
+  };
+  const addMovement = async () => {
+    if (!openSession || openSession.status !== 'Abierta') {
+      alert('No hay sesión abierta.');
+      return;
+    }
+    if (!window.electronAPI?.updateCashSession) {
+      alert('IPC no disponible');
+      return;
+    }
+    if (!(movementAmount > 0)) {
+      alert('El monto debe ser mayor a 0.');
+      return;
+    }
+    const current = openSession.movements || [];
+    const nextId = current.length ? Math.max(...current.map((m: any) => m.id || 0)) + 1 : 1;
+    const movement = {
+      id: nextId,
+      type: movementType,
+      amount: Number(movementAmount),
+      note: movementNote ? movementNote.trim() : undefined,
+      createdAt: new Date().toISOString()
+    };
+    try {
+      await window.electronAPI.updateCashSession(openSession.id, { movements: [...current, movement] });
+      resetMovementForm();
+      await loadCashSessions();
+      alert('Movimiento agregado');
+    } catch (error) {
+      console.error('Error adding movement:', error);
+      alert('No se pudo agregar el movimiento');
+    }
   };
   const exportSessionCSV = (session:any)=> {
     const items = getSessionSales(session);
@@ -927,6 +970,8 @@ const CashSession = () => {
             <div style={{ display:'flex', gap:16, marginTop:8, flexWrap:'wrap' }}>
               <div>Inicial: <strong>{formatMoney(openSession.initialAmount)}</strong></div>
               <div>Efectivo: <strong>{formatMoney(s.byMethod['Efectivo']||0)}</strong></div>
+              <div>Entradas: <strong>{formatMoney(s.totalEntradas)}</strong></div>
+              <div>Salidas: <strong>{formatMoney(s.totalSalidas)}</strong></div>
               <div>Esperado: <strong>{formatMoney(s.expectedCash)}</strong></div>
               <div>Ventas: <strong>{s.count}</strong></div>
             </div>
@@ -937,6 +982,21 @@ const CashSession = () => {
           </div>
         </div>
       ); })()}
+      {openSession && openSession.status === 'Abierta' && (
+        <div style={{ marginBottom:16, padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
+          <h4 style={{ marginTop:0 }}>Movimientos</h4>
+          <div style={{ display:'grid', gridTemplateColumns:'120px 140px 1fr auto', gap:8 }}>
+            <select value={movementType} onChange={e => setMovementType(e.target.value as 'Entrada' | 'Salida')}>
+              <option value="Entrada">Entrada</option>
+              <option value="Salida">Salida</option>
+            </select>
+            <input type="number" min={0} step="0.01" value={movementAmount}
+              onChange={e => setMovementAmount(Number(e.target.value) || 0)} placeholder="Monto" />
+            <input type="text" value={movementNote} onChange={e => setMovementNote(e.target.value)} placeholder="Nota (opcional)" />
+            <button type="button" onClick={addMovement}>Agregar movimiento</button>
+          </div>
+        </div>
+      )}
 
       {/* Filtros por fecha */}
       <div style={{ display:'flex', gap:12, alignItems:'center', marginBottom:14 }}>
@@ -1033,6 +1093,8 @@ const CashSession = () => {
                     <div><strong>Efectivo</strong><div>${(s.byMethod['Efectivo']||0).toFixed(2)}</div></div>
                     <div><strong>Tarjeta</strong><div>${(s.byMethod['Tarjeta']||0).toFixed(2)}</div></div>
                     <div><strong>Transferencia</strong><div>${(s.byMethod['Transferencia']||0).toFixed(2)}</div></div>
+                    <div><strong>Entradas</strong><div>${s.totalEntradas.toFixed(2)}</div></div>
+                    <div><strong>Salidas</strong><div>${s.totalSalidas.toFixed(2)}</div></div>
                   </div>
                   <div style={{ marginTop:'10px' }}>
                     <strong>Efectivo Esperado</strong>: ${s.expectedCash.toFixed(2)}
