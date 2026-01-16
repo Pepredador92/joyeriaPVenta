@@ -1257,6 +1257,11 @@ const Reports = () => {
   const [productQuery, setProductQuery] = useState('');
   const [customerQuery, setCustomerQuery] = useState('');
   const isInvalidRange = dateRange.startDate > dateRange.endDate;
+  const normalizeCashSessionId = (v: any): number | 'all' => {
+    if (v === 'all' || v === null || v === undefined) return 'all';
+    const parsed = Number(v);
+    return Number.isFinite(parsed) ? parsed : 'all';
+  };
 
   useEffect(() => {
     loadData();
@@ -1282,12 +1287,12 @@ const Reports = () => {
         if (typeof pQuery === 'string') setProductQuery(pQuery);
         if (typeof cQuery === 'string') setCustomerQuery(cQuery);
         if (cashSessionRaw !== undefined) {
-          const parsed = Number(cashSessionRaw);
-          setSelectedCashSessionId(Number.isFinite(parsed) ? parsed : 'all');
+          setSelectedCashSessionId(normalizeCashSessionId(cashSessionRaw));
         }
         // Mirror to localStorage
         try {
           const current = JSON.parse(localStorage.getItem('reportsSettings')||'{}');
+          const normalizedCashSessionId = normalizeCashSessionId(cashSessionRaw ?? current.cashSessionId);
           localStorage.setItem('reportsSettings', JSON.stringify({
             ...current,
             startDate: start ?? current.startDate,
@@ -1296,7 +1301,7 @@ const Reports = () => {
             activeTab: tab ?? current.activeTab,
             productQuery: typeof pQuery==='string'?pQuery:current.productQuery,
             customerQuery: typeof cQuery==='string'?cQuery:current.customerQuery,
-            cashSessionId: cashSessionRaw ?? current.cashSessionId
+            cashSessionId: normalizedCashSessionId
           }));
         } catch {}
         return;
@@ -1312,7 +1317,7 @@ const Reports = () => {
         if (v.activeTab) setActiveTab(v.activeTab);
         if (typeof v.productQuery==='string') setProductQuery(v.productQuery);
         if (typeof v.customerQuery==='string') setCustomerQuery(v.customerQuery);
-        if (v.cashSessionId !== undefined) setSelectedCashSessionId(v.cashSessionId);
+        if (v.cashSessionId !== undefined) setSelectedCashSessionId(normalizeCashSessionId(v.cashSessionId));
       }
     } catch {}
   };
@@ -1374,6 +1379,10 @@ const Reports = () => {
 
   const setQuickRange = (key: 'hoy'|'7d'|'30d'|'mes') => {
     const now = new Date();
+    if (selectedCashSessionId !== 'all') {
+      setSelectedCashSessionId('all');
+      showToast('Sesión desactivada');
+    }
     if (key === 'hoy') {
       const d = now.toISOString().split('T')[0];
       setDateRange({ startDate: d, endDate: d });
@@ -1395,6 +1404,10 @@ const Reports = () => {
   };
 
   const updateStartDate = (value: string) => {
+    if (selectedCashSessionId !== 'all') {
+      setSelectedCashSessionId('all');
+      showToast('Sesión desactivada');
+    }
     setDateRange(prev => {
       const startDate = value;
       const wasInvalid = startDate > prev.endDate;
@@ -1405,6 +1418,10 @@ const Reports = () => {
   };
 
   const updateEndDate = (value: string) => {
+    if (selectedCashSessionId !== 'all') {
+      setSelectedCashSessionId('all');
+      showToast('Sesión desactivada');
+    }
     setDateRange(prev => {
       const endDate = value;
       const wasInvalid = endDate < prev.startDate;
@@ -1457,8 +1474,9 @@ const Reports = () => {
   }, [customerQuery]);
 
   useEffect(()=>{
-    persistReportsLS({ cashSessionId: selectedCashSessionId });
-    persistReportSetting('reports_cash_session_id', String(selectedCashSessionId));
+    const normalized = normalizeCashSessionId(selectedCashSessionId);
+    persistReportsLS({ cashSessionId: normalized });
+    persistReportSetting('reports_cash_session_id', String(normalized));
   }, [selectedCashSessionId]);
 
   useEffect(() => {
@@ -1886,7 +1904,7 @@ const Reports = () => {
         <label style={{ display:'flex', alignItems:'center', gap:6 }}>
           <span>Sesión de caja</span>
           <select
-            value={selectedCashSessionId}
+            value={String(selectedCashSessionId)}
             onChange={(e) => {
               if (!canUseCashSessions) {
                 showToast('IPC no disponible');
