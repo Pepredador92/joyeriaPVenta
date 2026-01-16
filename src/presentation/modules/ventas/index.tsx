@@ -82,6 +82,12 @@ export const VentasPage: React.FC = () => {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
+  const [cashSessions, setCashSessions] = useState<any[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [showSessionModal, setShowSessionModal] = useState(false);
+  const [sessionInitialAmount, setSessionInitialAmount] = useState<string>('');
+  const [sessionNote, setSessionNote] = useState('');
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   // Configuración de descuentos/IVA
   const [discountMap, setDiscountMap] = useState<DiscountMap>({ Bronze: 0, Silver: 0.05, Gold: 0.08, Platinum: 0.12 });
@@ -109,13 +115,28 @@ export const VentasPage: React.FC = () => {
     }
   }, []);
 
+  const loadCashSessions = useCallback(async () => {
+    setIsLoadingSessions(true);
+    try {
+      if (!(window as any).electronAPI?.getCashSessions) {
+        setCashSessions([]);
+        return;
+      }
+      const sessions = await (window as any).electronAPI.getCashSessions();
+      setCashSessions(sessions || []);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
+    loadCashSessions();
     const off = (window as any).electronAPI?.onSalesChanged?.(() => {
       loadData().catch(() => {});
     });
     return () => { if (typeof off === 'function') off(); };
-  }, [loadData]);
+  }, [loadData, loadCashSessions]);
 
   useEffect(() => {
     // Inicial rápido por localStorage para no bloquear UI
@@ -205,9 +226,15 @@ export const VentasPage: React.FC = () => {
   const currency = useMemo(()=> new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }), []);
   const appliedLevel = selectedCustomer?.discountLevel || 'Bronze';
   const appliedPercent = Math.round(((discountMap[appliedLevel]||0) * 100));
+  const openSession = cashSessions.find((s) => s.status === 'Abierta') || null;
+  const showCashGate = !openSession;
 
   const confirmOrder = useCallback(async () => {
     if (orderItems.length === 0 || isConfirming) return;
+    if (showCashGate) {
+      setFeedback({ type: 'error', message: 'Para hacer una venta primero debes abrir una sesión de caja.' });
+      return;
+    }
     setIsConfirming(true);
     try {
       let requireCustomer = false;
@@ -242,7 +269,7 @@ export const VentasPage: React.FC = () => {
     } finally {
       setIsConfirming(false);
     }
-  }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData]);
+  }, [orderItems, isConfirming, selectedCustomer, paymentMethod, subtotal, discount, tax, total, loadData, showCashGate]);
 
   useEffect(() => {
     if (!feedback) return;
@@ -254,6 +281,112 @@ export const VentasPage: React.FC = () => {
 
   return (
     <div style={{ position:'relative', padding:'30px', display:'grid', gridTemplateColumns:'1fr 420px', gap:'30px', minHeight:'100vh' }}>
+      {showCashGate && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(15, 23, 42, 0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9998 }}>
+          <div style={{ background:'#fff', padding:'22px 24px', borderRadius:12, boxShadow:'0 12px 32px rgba(0,0,0,0.2)', width:'min(420px, 90vw)' }}>
+            <div style={{ fontSize:18, fontWeight:700, marginBottom:6 }}>Sesión de caja requerida</div>
+            <div style={{ color:'#555', marginBottom:14 }}>Para hacer una venta primero debes abrir una sesión de caja.</div>
+            <button
+              type="button"
+              onClick={() => {
+                setSessionError(null);
+                setShowSessionModal(true);
+              }}
+              style={{ width:'100%', background:'#2f6fed', color:'#fff', border:'none', borderRadius:8, padding:'10px 12px', cursor:'pointer', fontWeight:600 }}
+              disabled={isLoadingSessions}
+            >
+              Nueva sesión
+            </button>
+          </div>
+        </div>
+      )}
+      {showSessionModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:10000 }}>
+          <div style={{ background:'#fff', padding:20, borderRadius:12, width:'min(420px, 90vw)', boxShadow:'0 12px 32px rgba(0,0,0,0.25)' }}>
+            <h3 style={{ marginTop:0 }}>Nueva sesión de caja</h3>
+            <div style={{ display:'grid', gap:10 }}>
+              <div style={{ display:'grid', gap:6 }}>
+                <label>Monto inicial</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={sessionInitialAmount}
+                  onChange={(e) => {
+                    setSessionInitialAmount(e.target.value);
+                    setSessionError(null);
+                  }}
+                />
+                <div style={{ fontSize:12, color:'#667085' }}>Ingresa el efectivo con el que inicia la caja.</div>
+              </div>
+              <div style={{ display:'grid', gap:6 }}>
+                <label>Nota (opcional)</label>
+                <input
+                  type="text"
+                  value={sessionNote}
+                  onChange={(e) => setSessionNote(e.target.value)}
+                  placeholder="Ej: Cambio inicial"
+                />
+              </div>
+              {sessionError && <div style={{ color:'#d32f2f', fontSize:12 }}>{sessionError}</div>}
+              <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSessionModal(false);
+                    setSessionError(null);
+                  }}
+                  style={{ background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'8px 12px' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const initialAmountValue = Number(sessionInitialAmount);
+                    if (!Number.isFinite(initialAmountValue) || initialAmountValue < 0) {
+                      setSessionError('El monto inicial debe ser 0 o mayor.');
+                      return;
+                    }
+                    const api = (window as any).electronAPI;
+                    if (!api?.createCashSession) {
+                      alert('IPC no disponible');
+                      return;
+                    }
+                    try {
+                      await api.createCashSession({
+                        startTime: new Date().toISOString(),
+                        initialAmount: initialAmountValue || 0,
+                        status: 'Abierta',
+                        notes: sessionNote.trim() || undefined,
+                        endTime: null,
+                        finalAmount: 0,
+                      });
+                      await loadCashSessions();
+                      setShowSessionModal(false);
+                      setSessionInitialAmount('');
+                      setSessionNote('');
+                      setSessionError(null);
+                      setFeedback({ type: 'success', message: 'Sesión abierta. Ya puedes vender.' });
+                    } catch (err: any) {
+                      if (err?.message === 'CASH_SESSION_ALREADY_OPEN') {
+                        await loadCashSessions();
+                        setShowSessionModal(false);
+                        setSessionError(null);
+                        return;
+                      }
+                      setSessionError('No se pudo crear la sesión.');
+                    }
+                  }}
+                  style={{ background:'#2f6fed', color:'#fff', border:'none', borderRadius:8, padding:'8px 12px', fontWeight:600 }}
+                >
+                  Crear sesión
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {isConfirming && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.35)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9999, pointerEvents:'auto' }}>
           <div style={{ background:'#fff', padding:'18px 24px', borderRadius:12, boxShadow:'0 12px 32px rgba(0,0,0,0.25)', fontWeight:600 }}>
@@ -405,7 +538,23 @@ export const VentasPage: React.FC = () => {
         </div>
 
         <div style={{ display:'flex', gap:8 }}>
-          <button onClick={confirmOrder} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#4caf50', color:'#fff', border:'none', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', fontWeight:700, opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Confirmar compra</button>
+          <button
+            onClick={confirmOrder}
+            disabled={orderItems.length===0 || isConfirming || showCashGate}
+            style={{
+              flex:1,
+              background:'#4caf50',
+              color:'#fff',
+              border:'none',
+              borderRadius:6,
+              padding:'10px 12px',
+              cursor: orderItems.length===0 || isConfirming || showCashGate ? 'not-allowed' : 'pointer',
+              fontWeight:700,
+              opacity: orderItems.length===0 || isConfirming || showCashGate ? 0.6 : 1
+            }}
+          >
+            Confirmar compra
+          </button>
           <button onClick={()=>setOrderItems([])} disabled={orderItems.length===0 || isConfirming} style={{ flex:1, background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:6, padding:'10px 12px', cursor: orderItems.length===0 || isConfirming ? 'not-allowed' : 'pointer', opacity: orderItems.length===0 || isConfirming ? 0.6 : 1 }}>Cancelar</button>
         </div>
 
