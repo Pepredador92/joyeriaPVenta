@@ -23,8 +23,159 @@ export type Customer = { id: number; name: string };
 
 export type PeriodGranularity = 'day' | 'month' | 'year';
 export type PeriodRange = { startDate: string; endDate: string; granularity?: PeriodGranularity };
+export type RangeKind = 'hoy' | '7d' | '30d' | 'mes' | 'custom';
 
 const toDateOnly = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+export function getRangeForKind(
+  rangeKind: RangeKind,
+  customStart: string,
+  customEnd: string,
+  now = new Date()
+): { start: Date; end: Date } {
+  const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86400000);
+  const floorDate = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const startOfMonth = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), 1);
+  const today = floorDate(now);
+  switch (rangeKind) {
+    case 'hoy':
+      return { start: today, end: addDays(today, 1) };
+    case '7d':
+      return { start: addDays(today, -6), end: addDays(today, 1) };
+    case '30d':
+      return { start: addDays(today, -29), end: addDays(today, 1) };
+    case 'mes':
+      return { start: startOfMonth(today), end: addDays(today, 1) };
+    case 'custom': {
+      const s = new Date(customStart + 'T00:00:00');
+      const e = addDays(new Date(customEnd + 'T00:00:00'), 1);
+      return { start: s, end: e };
+    }
+    default:
+      return { start: today, end: addDays(today, 1) };
+  }
+}
+
+export function filterSalesByRange(sales: Sale[], start: Date, end: Date): Sale[] {
+  return (sales || []).filter((s) => {
+    const d = new Date(s.createdAt);
+    return d >= start && d < end;
+  });
+}
+
+export function buildKpis(sales: Sale[]): { total: number; count: number; avg: number; byMethod: Record<string, number> } {
+  const total = (sales || []).reduce((sum, s) => sum + (s.total || 0), 0);
+  const count = (sales || []).length;
+  const avg = count ? total / count : 0;
+  const byMethod: Record<string, number> = {};
+  (sales || []).forEach((s) => {
+    const m = s.paymentMethod || 'Otro';
+    byMethod[m] = (byMethod[m] || 0) + (s.total || 0);
+  });
+  return { total, count, avg, byMethod };
+}
+
+export function buildDailySeries(
+  sales: Sale[],
+  start: Date,
+  end: Date,
+  maxDays = 30
+): Array<{ date: Date; total: number }> {
+  const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86400000);
+  const days = Math.min(maxDays, Math.ceil((end.getTime() - start.getTime()) / 86400000));
+  const series: { date: Date; total: number }[] = [];
+  for (let i = 0; i < days; i++) {
+    const d0 = addDays(start, i);
+    const d1 = addDays(start, i + 1);
+    const t = (sales || []).reduce((sum: number, s: Sale) => {
+      const d = new Date(s.createdAt);
+      return (d >= d0 && d < d1) ? sum + (s.total || 0) : sum;
+    }, 0);
+    series.push({ date: d0, total: t });
+  }
+  return series;
+}
+
+export function getTopCategorias(
+  sales: Sale[],
+  products: Product[],
+  limit = 5
+): Array<[string, number]> {
+  const map = new Map<string, number>();
+  (sales || []).forEach((s) => {
+    (s.items || []).forEach((it: any) => {
+      let cat = 'Otros';
+      if (it.productId && it.productId !== 0) {
+        const p = products.find((pr) => pr.id === it.productId);
+        cat = p?.category || 'Otros';
+      } else if ((s as any).notes && typeof (s as any).notes === 'string') {
+        const m = (s as any).notes.match(/Categoría:\s*([^|]+)/i);
+        if (m) cat = m[1].trim();
+      }
+      map.set(cat, (map.get(cat) || 0) + (it.subtotal || 0));
+    });
+  });
+  return Array.from(map.entries()).sort((a, b) => b[1] - a[1]).slice(0, limit);
+}
+
+export function getLowStock(products: Product[], maxItems = 6): Product[] {
+  return (products || [])
+    .filter((p: any) => (p.stock ?? 0) > 0 && (p.stock ?? 0) < 10)
+    .sort((a: any, b: any) => a.stock - b.stock)
+    .slice(0, maxItems);
+}
+
+export function getTopClientes(
+  sales: Sale[],
+  customers: Customer[],
+  limit = 5
+): Array<{ customer: Customer; total: number }> {
+  const byCustomer = new Map<number, { customer: Customer; total: number }>();
+  (sales || []).forEach((s) => {
+    const id = s.customerId ?? undefined;
+    if (!id) return;
+    const c = customers.find((cc) => cc.id === id);
+    if (!c) return;
+    const cur = byCustomer.get(id) || { customer: c, total: 0 };
+    cur.total += s.total || 0;
+    byCustomer.set(id, cur);
+  });
+  return Array.from(byCustomer.values()).sort((a, b) => b.total - a.total).slice(0, limit);
+}
+
+export function getNewVsReturning(
+  sales: Sale[],
+  filteredSales: Sale[],
+  start: Date
+): { nuevos: number; recurrentes: number } {
+  let nuevos = 0, recurrentes = 0;
+  const startTs = start.getTime();
+  const salesByCustomer = new Map<number, number[]>();
+  (sales || []).forEach((s) => {
+    if (s.customerId) {
+      const arr = salesByCustomer.get(s.customerId) || [];
+      arr.push(new Date(s.createdAt).getTime());
+      salesByCustomer.set(s.customerId, arr);
+    }
+  });
+  const idsInRange = new Set<number>();
+  (filteredSales || []).forEach((s) => { if (s.customerId) idsInRange.add(s.customerId); });
+  idsInRange.forEach((id) => {
+    const arr = (salesByCustomer.get(id) || []).filter(ts => ts < startTs);
+    if (arr.length === 0) nuevos++; else recurrentes++;
+  });
+  return { nuevos, recurrentes };
+}
+
+export function getOpenSession<T extends { status?: string }>(sessions: T[]): T | null {
+  return (sessions || []).find((s) => s.status === 'Abierta') || null;
+}
+
+export function getRecentSales(sales: Sale[], limit = 10): Sale[] {
+  return [...(sales || [])]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+}
 
 export function getVentasTotales(sales: Sale[]): number {
   return (sales || []).reduce((sum, s) => sum + (s.total || 0), 0);
@@ -58,30 +209,6 @@ export function getTopProductos(
     });
   });
   return Array.from(byId.values()).sort((a, b) => b.revenue - a.revenue).slice(0, n);
-}
-
-export function getTopClientes(
-  sales: Sale[],
-  customers: Customer[],
-  n = 10
-): Array<{ customer: Customer; total: number; purchases: number; avg: number }> {
-  const custMap = new Map(customers.map(c => [c.id, c] as const));
-  const agg = new Map<number, { total: number; purchases: number }>();
-  (sales || []).forEach(s => {
-    const id = s.customerId ?? undefined;
-    if (!id) return;
-    const cur = agg.get(id) || { total: 0, purchases: 0 };
-    cur.total += s.total || 0;
-    cur.purchases += 1;
-    agg.set(id, cur);
-  });
-  const out: Array<{ customer: Customer; total: number; purchases: number; avg: number }> = [];
-  agg.forEach((v, id) => {
-    const c = custMap.get(id);
-    if (!c) return;
-    out.push({ customer: c, total: v.total, purchases: v.purchases, avg: v.purchases ? v.total / v.purchases : 0 });
-  });
-  return out.sort((a, b) => b.total - a.total).slice(0, n);
 }
 
 export function getIngresosPorPeriodo(

@@ -20,6 +20,16 @@ import {
   getDescuentosTotales as getDescuentosTotalesRpt,
   getIngresosPorPeriodo as getIngresosPorPeriodoRpt,
   getTopProductos as getTopProductosRpt,
+  getRangeForKind,
+  filterSalesByRange as filterSalesByRangeRpt,
+  buildKpis as buildKpisRpt,
+  buildDailySeries as buildDailySeriesRpt,
+  getTopCategorias as getTopCategoriasRpt,
+  getLowStock as getLowStockRpt,
+  getTopClientes as getTopClientesRpt,
+  getNewVsReturning as getNewVsReturningRpt,
+  getOpenSession as getOpenSessionRpt,
+  getRecentSales as getRecentSalesRpt,
 } from './domain/reportes/reportesService';
 
 type CurrentView = 'dashboard' | 'sales' | 'products' | 'inventory' | 'customers' | 'cash-session' | 'reports' | 'settings';
@@ -268,116 +278,30 @@ const Dashboard = () => {
 
   const startOfMonth = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), 1);
   const addDays = (d: Date, days: number) => new Date(d.getTime() + days*86400000);
-  const floorDate = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const getRange = (): { start: Date; end: Date } => {
-    const today = floorDate(new Date());
-    switch (rangeKind) {
-      case 'hoy': return { start: today, end: addDays(today, 1) };
-      case '7d': return { start: addDays(today, -6), end: addDays(today, 1) };
-      case '30d': return { start: addDays(today, -29), end: addDays(today, 1) };
-      case 'mes': return { start: startOfMonth(today), end: addDays(today, 1) };
-      case 'custom': {
-        const s = new Date(customStart + 'T00:00:00');
-        const e = addDays(new Date(customEnd + 'T00:00:00'), 1);
-        return { start: s, end: e };
-      }
-      default: return { start: today, end: addDays(today, 1) };
-    }
-  };
+  const { start, end } = getRangeForKind(rangeKind, customStart, customEnd);
+  const filteredSales = filterSalesByRangeRpt(sales as any, start, end);
 
-  const { start, end } = getRange();
-  const filteredSales = sales.filter((s:any)=> {
-    const d = new Date(s.createdAt);
-    return d >= start && d < end;
-  });
-
-  const kpis = (() => {
-    const total = filteredSales.reduce((sum:number, s:any)=> sum + (s.total||0), 0);
-    const count = filteredSales.length;
-    const avg = count ? total / count : 0;
-    const byMethod: Record<string, number> = {};
-    filteredSales.forEach((s:any)=> {
-      const m = s.paymentMethod || 'Otro';
-      byMethod[m] = (byMethod[m]||0) + (s.total||0);
-    });
-    return { total, count, avg, byMethod };
-  })();
+  const kpis = buildKpisRpt(filteredSales as any);
 
   // Trend (daily totals within range up to 30 pts)
-  const buildDailySeries = () => {
-    const days = Math.min(30, Math.ceil((end.getTime()-start.getTime())/86400000));
-    const series: { date: Date; total: number }[] = [];
-    for (let i=0; i<days; i++) {
-      const d0 = addDays(start, i);
-      const d1 = addDays(start, i+1);
-      const t = sales.reduce((sum:number, s:any)=> {
-        const d = new Date(s.createdAt);
-        return (d>=d0 && d<d1) ? sum + (s.total||0) : sum;
-      }, 0);
-      series.push({ date: d0, total: t });
-    }
-    return series;
-  };
-  const series = buildDailySeries();
+  const series = buildDailySeriesRpt(sales as any, start, end, 30);
   const maxY = Math.max(1, ...series.map(p=>p.total));
 
   // Top categorías (por ingresos)
-  const topCategorias = (() => {
-    const map = new Map<string, number>();
-    filteredSales.forEach((s:any)=> {
-      (s.items||[]).forEach((it:any)=> {
-        let cat = 'Otros';
-        if (it.productId && it.productId !== 0) {
-          const p = products.find(pr=> pr.id === it.productId);
-          cat = p?.category || 'Otros';
-        } else if (s.notes && typeof s.notes === 'string') {
-          const m = s.notes.match(/Categoría:\s*([^|]+)/i);
-          if (m) cat = m[1].trim();
-        }
-        map.set(cat, (map.get(cat)||0) + (it.subtotal || 0));
-      });
-    });
-    return Array.from(map.entries()).sort((a,b)=> b[1]-a[1]).slice(0,5);
-  })();
+  const topCategorias = getTopCategoriasRpt(filteredSales as any, products as any, 5);
 
   // Low stock
-  const lowStock = products.filter(p=> (p.stock??0) > 0 && (p.stock??0) < 10).sort((a,b)=> a.stock-b.stock).slice(0,6);
+  const lowStock = getLowStockRpt(products as any, 6);
 
   // Top clientes
-  const topClientes = (()=> {
-    const byCustomer = new Map<number, { customer:any, total:number }>();
-    filteredSales.forEach((s:any)=> {
-      if (!s.customerId) return;
-      const c = customers.find(cc=> cc.id === s.customerId);
-      if (!c) return;
-      const cur = byCustomer.get(s.customerId) || { customer: c, total: 0 };
-      cur.total += (s.total||0);
-      byCustomer.set(s.customerId, cur);
-    });
-    return Array.from(byCustomer.values()).sort((a,b)=> b.total-a.total).slice(0,5);
-  })();
+  const topClientes = getTopClientesRpt(filteredSales as any, customers as any, 5);
 
   // New vs recurrentes en el rango
-  const newVsReturning = (()=>{
-    let nuevos = 0, recurrentes = 0;
-    const startTs = start.getTime();
-    const salesByCustomer = new Map<number, number[]>();
-    sales.forEach((s:any)=> { if (s.customerId) {
-      const arr = salesByCustomer.get(s.customerId) || [];
-      arr.push(new Date(s.createdAt).getTime());
-      salesByCustomer.set(s.customerId, arr);
-    }});
-    const idsInRange = new Set<number>();
-    filteredSales.forEach((s:any)=> { if (s.customerId) idsInRange.add(s.customerId); });
-    idsInRange.forEach(id=> {
-      const arr = (salesByCustomer.get(id)||[]).filter(ts=> ts < startTs);
-      if (arr.length === 0) nuevos++; else recurrentes++;
-    });
-    return { nuevos, recurrentes };
-  })();
+  const newVsReturning = getNewVsReturningRpt(sales as any, filteredSales as any, start);
 
   // Sesión de caja
-  const openSession = (cashSessions||[]).find((s:any)=> s.status === 'Abierta') || null;
+  const openSession = getOpenSessionRpt(cashSessions || []);
+  const recentSales = getRecentSalesRpt(sales as any, 10);
 
   return (
     <div className="lux-dashboard" style={{ padding: '36px min(4vw,64px) 60px', width:'100%', boxSizing:'border-box' }}>
@@ -566,7 +490,7 @@ const Dashboard = () => {
         <div className="stat-card" style={{ padding:16 }}>
           <strong>Ventas recientes</strong>
           <div style={{ marginTop:10, maxHeight:220, overflow:'auto', display:'grid', gap:8 }}>
-            {[...sales].sort((a:any,b:any)=> new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime()).slice(0,10).map((s:any)=> (
+            {recentSales.map((s:any)=> (
               <div key={s.id} style={{ display:'grid', gridTemplateColumns:'auto 1fr auto', gap:8, alignItems:'center' }}>
                 <span style={{ fontSize:12, color:'#666' }}>{new Date(s.createdAt).toLocaleString('es-MX')}</span>
                 <span style={{ color:'#555' }}>{s.paymentMethod||'Otro'}</span>
