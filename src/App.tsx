@@ -632,6 +632,7 @@ const CashSession = () => {
   const [movementType, setMovementType] = useState<'Entrada' | 'Salida'>('Entrada');
   const [movementAmount, setMovementAmount] = useState<number>(0);
   const [movementNote, setMovementNote] = useState('');
+  const [movementToast, setMovementToast] = useState<string | null>(null);
   const [newSession, setNewSession] = useState({
     initialAmount: 0, finalAmount: 0, notes: ''
   });
@@ -792,6 +793,10 @@ const CashSession = () => {
     setMovementAmount(0);
     setMovementNote('');
   };
+  const showMovementToast = (msg: string) => {
+    setMovementToast(msg);
+    setTimeout(() => setMovementToast(null), 2000);
+  };
   const addMovement = async () => {
     if (!openSession || openSession.status !== 'Abierta') {
       alert('No hay sesión abierta.');
@@ -822,6 +827,27 @@ const CashSession = () => {
     } catch (error) {
       console.error('Error adding movement:', error);
       alert('No se pudo agregar el movimiento');
+    }
+  };
+  const removeMovement = async (movementId: number) => {
+    if (!openSession || openSession.status !== 'Abierta') {
+      alert('No hay sesión abierta.');
+      return;
+    }
+    if (!window.electronAPI?.updateCashSession) {
+      alert('IPC no disponible');
+      return;
+    }
+    if (!confirm('¿Eliminar este movimiento?')) return;
+    const current = openSession.movements || [];
+    const nextMovements = current.filter((m: any) => m.id !== movementId);
+    try {
+      await window.electronAPI.updateCashSession(openSession.id, { movements: nextMovements });
+      await loadCashSessions();
+      showMovementToast('Movimiento eliminado');
+    } catch (error) {
+      console.error('Error removing movement:', error);
+      alert('No se pudo eliminar el movimiento');
     }
   };
   const exportSessionCSV = (session:any)=> {
@@ -985,7 +1011,7 @@ const CashSession = () => {
       {openSession && openSession.status === 'Abierta' && (
         <div style={{ marginBottom:16, padding:14, border:'1px solid #e0e0e0', borderRadius:8, background:'#fff' }}>
           <h4 style={{ marginTop:0 }}>Movimientos</h4>
-          <div style={{ display:'grid', gridTemplateColumns:'120px 140px 1fr auto', gap:8 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'120px 140px 1fr auto auto', gap:8 }}>
             <select value={movementType} onChange={e => setMovementType(e.target.value as 'Entrada' | 'Salida')}>
               <option value="Entrada">Entrada</option>
               <option value="Salida">Salida</option>
@@ -994,6 +1020,34 @@ const CashSession = () => {
               onChange={e => setMovementAmount(Number(e.target.value) || 0)} placeholder="Monto" />
             <input type="text" value={movementNote} onChange={e => setMovementNote(e.target.value)} placeholder="Nota (opcional)" />
             <button type="button" onClick={addMovement}>Agregar movimiento</button>
+            <button type="button" onClick={resetMovementForm}>Limpiar</button>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            {((openSession.movements || []).length === 0) ? (
+              <div style={{ color: '#666' }}>Sin movimientos</div>
+            ) : (
+              <div style={{ display:'grid', gridTemplateColumns:'1.2fr 0.7fr 0.6fr 1fr auto', gap:8 }}>
+                <div style={{ fontWeight:600 }}>Fecha/Hora</div>
+                <div style={{ fontWeight:600 }}>Tipo</div>
+                <div style={{ fontWeight:600 }}>Monto</div>
+                <div style={{ fontWeight:600 }}>Nota</div>
+                <div style={{ fontWeight:600 }}>Acción</div>
+                {(openSession.movements || [])
+                  .slice()
+                  .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                  .map((m: any) => (
+                    <React.Fragment key={m.id}>
+                      <div>{new Date(m.createdAt).toLocaleString('es-MX')}</div>
+                      <div>{m.type}</div>
+                      <div>{formatMoney(m.amount || 0)}</div>
+                      <div>{m.note || '—'}</div>
+                      <div>
+                        <button type="button" onClick={() => removeMovement(m.id)}>Eliminar</button>
+                      </div>
+                    </React.Fragment>
+                  ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1215,6 +1269,9 @@ const CashSession = () => {
           </tbody>
         </table>
       </div>
+      {movementToast && (
+        <div style={{ position:'fixed', bottom:16, right:16, background:'#333', color:'#fff', padding:'8px 12px', borderRadius:8 }}>{movementToast}</div>
+      )}
 
       {/* Modal de detalle */}
       {detailSession && (() => { const s = summarizeSession(detailSession); return (
